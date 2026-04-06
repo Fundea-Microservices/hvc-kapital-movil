@@ -1,0 +1,43 @@
+{
+  "name": "onesiteapp_ex",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "devprueba": "set ANDROID_HOME=C:\\Users\\Admin\\AppData\\Local\\Android\\Sdk && npx expo start",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "@morrowdigital/watermelondb-expo-plugin": "^2.3.3",
+    "@nozbe/watermelondb": "^0.28.0",
+    "@tanstack/react-query": "^5.91.2",
+    "axios": "^1.13.6",
+    "big.js": "^7.0.1",
+    "expo": "~55.0.8",
+    "expo-application": "~55.0.10",
+    "expo-build-properties": "~55.0.10",
+    "expo-constants": "~55.0.9",
+    "expo-dev-client": "~55.0.18",
+    "expo-device": "~55.0.10",
+    "expo-secure-store": "~55.0.9",
+    "expo-sqlite": "~55.0.11",
+    "expo-status-bar": "~55.0.4",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.2",
+    "react-native-reanimated": "4.2.1",
+    "react-native-web": "^0.21.0",
+    "zod": "^4.3.6",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "@babel/plugin-proposal-decorators": "^7.29.0",
+    "@types/big.js": "^6.2.2",
+    "@types/react": "~19.2.2",
+    "babel-preset-expo": "^55.0.12",
+    "typescript": "~5.9.2"
+  },
+  "private": true
+}
