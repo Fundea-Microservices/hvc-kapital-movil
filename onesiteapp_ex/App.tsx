@@ -1,74 +1,87 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator } from 'react-native';
+import { View, Text, ActivityIndicator, Button } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
 
 // Importaciones de nuestra Clean Architecture
 import { EnrollmentScreen } from './src/presentation/screens/Enrollment/EnrollmentScreen';
+import { LoginScreen } from './src/presentation/screens/Login/LoginScreen';
 import { useAuthStore } from './src/presentation/store/useAuthStore';
 import { database } from './src/data/local/database';
 
 // 1. Instanciamos el QueryClient de TanStack
 const queryClient = new QueryClient();
 
-
-// 2. Componente Temporal para el Dashboard (Sprint 2)
+// Dashboard Temporal (Sprint 3 en adelante)
 const DashboardScreen = () => {
-  const deviceToken = useAuthStore((state) => state.deviceToken);
+  const { wipeData } = useAuthStore();
+  const userId = useAuthStore((state) => state.userId);
+
+  const handleLogout = async () => {
+    await SecureStore.deleteItemAsync('token_sesion');
+    await SecureStore.deleteItemAsync('user_id');
+    await SecureStore.deleteItemAsync('refresh_token');
+    // Para hacer logout completo temporalmente, reseteamos usando wipeData
+    // (En el futuro crearemos un método solo para logout sin borrar el enrolamiento)
+    wipeData(); 
+  };
+
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#e0f7fa' }}>
-      <Text style={{ fontSize: 22, fontWeight: 'bold' }}>¡Equipo Enrolado!</Text>
-      <Text style={{ marginTop: 10, color: '#006064' }}>Token Activo:</Text>
-      <Text style={{ fontSize: 10, marginTop: 5 }}>{deviceToken}</Text>
+      <Text style={{ fontSize: 22, fontWeight: 'bold' }}>¡Bienvenido al Sistema!</Text>
+      <Text style={{ marginTop: 10, color: '#006064', marginBottom: 20 }}>Usuario ID: {userId}</Text>
+      <Button title="Cerrar Sesión (Test)" onPress={handleLogout} color="#d32f2f" />
     </View>
   );
 };
 
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
-  
-  // Extraemos las acciones y estados de nuestro Store
-  const { isEnrolled, checkLocalEnrollment } = useAuthStore();
+  const { isEnrolled, isLoggedIn, checkLocalState } = useAuthStore();
 
-  // 3. Efecto para verificar el estado de enrolamiento al abrir la app
   useEffect(() => {
     const checkStatus = async () => {
       try {
         const enrolledStatus = await SecureStore.getItemAsync('isEnrolled');
-        const token = await SecureStore.getItemAsync('deviceToken');
+        const deviceToken = await SecureStore.getItemAsync('deviceToken');
+        const sessionToken = await SecureStore.getItemAsync('token_sesion');
+        const userIdRaw = await SecureStore.getItemAsync('user_id');
         
-        // Si existe el flag 'true', actualizamos el store
-        if (enrolledStatus === 'true') {
-          checkLocalEnrollment(true, token);
-        } else {
-          checkLocalEnrollment(false, null);
-        }
+        const isAppEnrolled = enrolledStatus === 'true';
+        const isUserLoggedIn = !!sessionToken;
+        const userId = userIdRaw ? parseInt(userIdRaw, 10) : null;
+
+        checkLocalState(isAppEnrolled, deviceToken, isUserLoggedIn, sessionToken, userId);
       } catch (error) {
         console.error("Error leyendo SecureStore", error);
-        checkLocalEnrollment(false, null);
+        checkLocalState(false, null, false, null, null);
       } finally {
         setIsLoading(false);
       }
     };
 
     checkStatus();
-  }, [checkLocalEnrollment]);
+  }, [checkLocalState]);
 
-  // Pantalla de carga mientras lee el SecureStore
   if (isLoading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator size="large" color="#0000ff" />
-        <Text>Verificando dispositivo...</Text>
+        <Text style={{ marginTop: 10 }}>Verificando seguridad...</Text>
       </View>
     );
   }
 
-  // 4. Proveedor de TanStack y Lógica de Navegación Condicional
+  // ÁRBOL DE DECISIÓN (Flujo 1 y Flujo 2)
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Si está enrolado va al Dashboard, si no, a la pantalla de Registro */}
-      {isEnrolled ? <DashboardScreen /> : <EnrollmentScreen />}
+      {!isEnrolled ? (
+        <EnrollmentScreen />
+      ) : !isLoggedIn ? (
+        <LoginScreen />
+      ) : (
+        <DashboardScreen />
+      )}
     </QueryClientProvider>
   );
 }

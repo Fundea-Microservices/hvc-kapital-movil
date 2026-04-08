@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 1, // Incrementa esto cada vez que cambies la estructura
+  version: 2, // Incrementa    esto cada vez que cambies la estructura
   tables: [
     // Tabla para control de sincronización por tabla (Regla 4.4 y 4.5)
     tableSchema({
@@ -17,6 +17,17 @@ export const schema = appSchema({
       columns: [
         { name: 'clave', type: 'string', isIndexed: true },
         { name: 'valor', type: 'string' },
+      ],
+    }),
+
+    tableSchema({
+      name: 'usuario_perfil',
+      columns: [
+        { name: 'id_usuario', type: 'number', isIndexed: true },
+        { name: 'nombre', type: 'string' },
+        { name: 'rol', type: 'string' },
+        { name: 'permisos_json', type: 'string' }, // Guardamos el objeto como stringified JSON
+        { name: 'ultimo_login', type: 'number' },
       ],
     }),
   ],

@@ -4,6 +4,7 @@ import SQLiteAdapter from '@nozbe/watermelondb/adapters/sqlite';
 import { schema } from './schema';
 import MetadataSync from './models/MetadataSync';
 import CatParametros from './models/CatParametros';
+import UsuarioPerfil from './models/UsuarioPerfil';
 
 // 1. Configurar el adaptador para SQLite
 const adapter = new SQLiteAdapter({
@@ -22,5 +23,6 @@ export const database = new Database({
   modelClasses: [
     MetadataSync,
     CatParametros,
+    UsuarioPerfil
   ],
 });

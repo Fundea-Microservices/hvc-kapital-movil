@@ -1,13 +1,20 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './users/user.entity';
 import { DeviceController } from './modules/device-management/infrastructure/device.controller';
 import { DeviceService } from './modules/device-management/application/device.service';
+// import { DeviceModule } from './modules/device-management/device.module';
+import { AuthModule } from './modules/auth/auth.module';
 
 @Module({
   imports: [
+    ConfigModule.forRoot({
+      isGlobal: true, // Hace que las variables del .env estén disponibles en toda la app
+      envFilePath: '.env', // Especifica explícitamente el archivo a leer
+    }),
     TypeOrmModule.forRoot({
       type: 'mssql',
       host: 'localhost',       // ej: localhost o IP servidor
@@ -28,6 +35,8 @@ import { DeviceService } from './modules/device-management/application/device.se
       },
       
     }),
+    AuthModule,
+    //DeviceModule,
   ],
   controllers: [AppController,DeviceController],
   providers: [AppService, DeviceService],

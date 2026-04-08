@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+//import * as bcrypt from 'bcrypt'; // Añade esto
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -12,6 +13,11 @@ app.enableCors({
   });
 
   app.useGlobalPipes(new ValidationPipe());
+
+  // --- TEST TEMPORAL ---
+  //const testHash = await bcrypt.hash('123456', 10);
+  //console.log('✅ HASH REAL PARA 123456:', testHash);
+  // ---------------------
 
   await app.listen(process.env.PORT ?? 5030);
   
