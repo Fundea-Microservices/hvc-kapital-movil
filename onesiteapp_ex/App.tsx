@@ -9,13 +9,16 @@ import { LoginScreen } from './src/presentation/screens/Login/LoginScreen';
 import { useAuthStore } from './src/presentation/store/useAuthStore';
 import { database } from './src/data/local/database';
 
+import { useLogout } from './src/presentation/hooks/useLogout';
 // 1. Instanciamos el QueryClient de TanStack
 const queryClient = new QueryClient();
 
 // Dashboard Temporal (Sprint 3 en adelante)
 const DashboardScreen = () => {
   const { wipeData } = useAuthStore();
+  const { executeLogout } = useLogout();
   const userId = useAuthStore((state) => state.userId);
+  
 
   const handleLogout = async () => {
     await SecureStore.deleteItemAsync('token_sesion');
@@ -27,10 +30,19 @@ const DashboardScreen = () => {
   };
 
   return (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#e0f7fa' }}>
-      <Text style={{ fontSize: 22, fontWeight: 'bold' }}>¡Bienvenido al Sistema!</Text>
-      <Text style={{ marginTop: 10, color: '#006064', marginBottom: 20 }}>Usuario ID: {userId}</Text>
-      <Button title="Cerrar Sesión (Test)" onPress={handleLogout} color="#d32f2f" />
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F0F4F7' }}>
+      <View style={{ padding: 20, backgroundColor: 'white', borderRadius: 15, elevation: 5, alignItems: 'center' }}>
+        <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#333' }}>Dashboard Principal</Text>
+        <Text style={{ marginTop: 10, color: '#666' }}>ID de Sesión: {userId}</Text>
+        
+        <View style={{ marginTop: 30, width: 200 }}>
+          <Button 
+            title="Cerrar Sesión" 
+            onPress={executeLogout} 
+            color="#E53935" 
+          />
+        </View>
+      </View>
     </View>
   );
 };
@@ -85,3 +97,4 @@ export default function App() {
     </QueryClientProvider>
   );
 }
+

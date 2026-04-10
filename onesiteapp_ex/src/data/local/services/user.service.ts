@@ -26,3 +26,19 @@ export const saveUserProfileLocal = async (perfil: {
     });
   });
 };
+
+/**
+ * Borra permanentemente los datos del perfil del usuario en SQLite.
+ * Se usa en Logout o cuando el dispositivo es bloqueado (Wipe).
+ */
+export const clearUserProfileLocal = async () => {
+  await database.write(async () => {
+    const collection = database.get<UsuarioPerfil>('usuario_perfil');
+    const allRecords = await collection.query().fetch();
+    
+    // Borrado físico de los registros
+    for (const record of allRecords) {
+      await record.destroyPermanently();
+    }
+  });
+};

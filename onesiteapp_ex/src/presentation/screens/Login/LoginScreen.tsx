@@ -50,8 +50,6 @@ export const LoginScreen = () => {
         Alert.alert('Error', errorMsg);
       }
     },
-
-    
     
   });
 
