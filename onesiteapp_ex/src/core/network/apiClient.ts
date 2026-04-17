@@ -41,6 +41,19 @@ apiClient.interceptors.response.use(
     const deviceToken = await SecureStore.getItemAsync('deviceToken');
     const sessionToken = await SecureStore.getItemAsync('token_sesion');
 
+    if (!error.headers) {
+      error.headers = {} as any;
+    }
+    // Inyectamos el DeviceToken en el Header personalizado
+    if (deviceToken) {
+      error.headers['x-device-token'] = deviceToken;
+    }
+    
+    // Inyectamos el JWT de sesión
+    if (sessionToken) {
+      error.headers.Authorization = `Bearer ${sessionToken}`;
+    }
+
     // LOGS ESTRATÉGICOS
     console.log(`📡 [NETWORK] Petición a: ${error.url}`);
     if (deviceToken) console.log(`🔑 [HEADER INYECTADO] x-device-token: ${deviceToken.substring(0, 8)}...`);

@@ -5,13 +5,14 @@ import { schema } from './schema';
 import MetadataSync from './models/MetadataSync';
 import CatParametros from './models/CatParametros';
 import UsuarioPerfil from './models/UsuarioPerfil';
+import CatMenu from './models/CatMenu';
 
 // 1. Configurar el adaptador para SQLite
 const adapter = new SQLiteAdapter({
   schema,
   // (Opcional) Migraciones: las configuraremos en el futuro si el esquema cambia
   // migrations,
-  jsi: true, // Habilita JSI para un rendimiento 2x-3x más rápido en Android/iOS
+  jsi: false, // Habilita JSI para un rendimiento 2x-3x más rápido en Android/iOS
   onSetUpError: error => {
     console.error('Error al configurar la base de datos local:', error);
   }
@@ -23,6 +24,7 @@ export const database = new Database({
   modelClasses: [
     MetadataSync,
     CatParametros,
-    UsuarioPerfil
+    UsuarioPerfil,
+    CatMenu,
   ],
 });

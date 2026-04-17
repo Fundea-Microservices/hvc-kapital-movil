@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 2, // Incrementa    esto cada vez que cambies la estructura
+  version: 4, // Incrementa    esto cada vez que cambies la estructura
   tables: [
     // Tabla para control de sincronización por tabla (Regla 4.4 y 4.5)
     tableSchema({
@@ -13,7 +13,7 @@ export const schema = appSchema({
     }),
     // Tabla para parámetros de configuración local (Regla 1.5 - Persistencia local)
     tableSchema({
-      name: 'cat_parametros',
+      name: 'cat_parametros_appex',
       columns: [
         { name: 'clave', type: 'string', isIndexed: true },
         { name: 'valor', type: 'string' },
@@ -30,5 +30,18 @@ export const schema = appSchema({
         { name: 'ultimo_login', type: 'number' },
       ],
     }),
+
+    // Tabla del Sprint 3
+    tableSchema({
+      name: 'cat_menu_appex',
+      columns: [
+        { name: 'id_padre', type: 'string', isOptional: true, isIndexed: true },
+        { name: 'titulo', type: 'string' },
+        { name: 'icono', type: 'string', isOptional: true },
+        { name: 'orden', type: 'number' },
+        { name: 'ruta_pantalla', type: 'string', isOptional: true },
+      ],
+    }),
+
   ],
 });

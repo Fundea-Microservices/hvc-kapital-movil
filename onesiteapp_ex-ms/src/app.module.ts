@@ -8,6 +8,7 @@ import { DeviceController } from './modules/device-management/infrastructure/dev
 import { DeviceService } from './modules/device-management/application/device.service';
 // import { DeviceModule } from './modules/device-management/device.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { SyncModule } from './modules/sync/sync.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { AuthModule } from './modules/auth/auth.module';
       
     }),
     AuthModule,
+    SyncModule,
     //DeviceModule,
   ],
   controllers: [AppController,DeviceController],
