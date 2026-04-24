@@ -4,6 +4,7 @@ module.exports = function(api) {
     presets: ['babel-preset-expo'],
     plugins: [
       ['@babel/plugin-proposal-decorators', { legacy: true }],
+      'nativewind/babel',
       'react-native-reanimated/plugin', // Reanimated siempre debe ir al final
       //'react-native-worklets/plugin',
     ],

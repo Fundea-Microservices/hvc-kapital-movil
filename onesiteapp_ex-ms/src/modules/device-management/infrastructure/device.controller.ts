@@ -1,4 +1,4 @@
-import { Controller, Post, Put, Body, UsePipes } from '@nestjs/common';
+import { Controller, Post, Put, Body, UsePipes, Patch, Get, Param, Query } from '@nestjs/common';
 import { DeviceService } from '../application/device.service';
 import { type EnrollDeviceDto, EnrollDeviceSchema } from '../domain/dtos/enroll-device.dto';
 import * as updateMetadataDto from '../domain/dtos/update-metadata.dto';
@@ -23,13 +23,24 @@ export class DeviceController {
     return await this.deviceService.actualizarInfo(validData);
   }
 
+  // ... (métodos POST enroll y PUT metadata)
 
+  // SPRINT 4: Botón de Pánico desde el BackOffice
+@Patch('block/:token')
+  async blockDevice(@Param('token') token: string) {
+    return await this.deviceService.darDeBaja(token);
+  }
 
+  // SPRINT 4: Validación de versión de la App
+  // Validación de versión de la App (Middleware/Guard opcional en el futuro)
+  @Get('version')
+  async checkVersion(@Query('appVersion') appVersion: string) {
+    return await this.deviceService.verificarVersion(appVersion);
+  }
 }
-  // Usamos un Pipe personalizado o validación manual para Zod
+// Usamos un Pipe personalizado o validación manual para Zod
  // async enrollDevice(@Body() body: EnrollDeviceDto) {
     // Validar esquema con Zod antes de procesar
  //   const validData = EnrollDeviceSchema.parse(body);
-    
  //   return await this.deviceService.enrolarEquipo(validData);
  // } }

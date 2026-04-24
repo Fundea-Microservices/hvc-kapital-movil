@@ -1,7 +1,10 @@
+import './global.css';
 import React, { useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, Button, StyleSheet } from 'react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
+import * as Application from 'expo-application';
+import { apiClient } from './src/core/network/apiClient';
 
 // Importaciones de nuestra Clean Architecture
 import { EnrollmentScreen } from './src/presentation/screens/Enrollment/EnrollmentScreen';
@@ -86,6 +89,10 @@ export default function App() {
   useEffect(() => {
     const checkStatus = async () => {
       try {
+        //2 lineas siguientes Sprint 4
+        const appVersion = Application.nativeApplicationVersion || '1.0.0';
+        await apiClient.get(`/devices/version?appVersion=${appVersion}`);
+        // Leer estado de la memoria
         const enrolledStatus = await SecureStore.getItemAsync('isEnrolled');
         const deviceToken = await SecureStore.getItemAsync('deviceToken');
         const sessionToken = await SecureStore.getItemAsync('token_sesion');

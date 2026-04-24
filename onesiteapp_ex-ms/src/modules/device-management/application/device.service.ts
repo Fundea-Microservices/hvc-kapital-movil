@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { EnrollDeviceDto } from '../domain/dtos/enroll-device.dto';
 import { UpdateMetadataDto } from '../domain/dtos/update-metadata.dto';
@@ -85,4 +85,57 @@ export class DeviceService {
       message: 'Metadatos actualizados correctamente',
     };
   }
+
+  // SPRINT 4: Método 4.1 - DarDeBaja (PATCH)
+  // Este método será consumido por el BackOffice Web (Botón de Pánico)
+  async darDeBaja(deviceToken: string) {
+    // 1. Verificamos que el dispositivo exista
+    const dispositivo = await this.dataSource.query(
+      `SELECT IdDispositivo FROM Dispositivos WHERE DeviceToken = @0`,
+      [deviceToken]
+    );
+
+    if (!dispositivo.length) {
+      throw new NotFoundException('Dispositivo no encontrado');
+    }
+
+    // 2. Bloqueo administrativo (Estado = 0)
+    // El Trigger de SQL Server actualizará Control_Versiones automáticamente
+    await this.dataSource.query(
+      `UPDATE Dispositivos 
+       SET Estado = 0, FechaModificacion = GETDATE() 
+       WHERE DeviceToken = @0`,
+      [deviceToken]
+    );
+
+    // 3. Regla Crítica 4.5: Bloqueo de hardware superior a sesión
+    // Por seguridad extrema, también invalidamos cualquier sesión activa de este equipo
+    await this.dataSource.query(
+      `UPDATE Sesiones 
+       SET Activa = 0 
+       WHERE IdDispositivo = @0`,
+      [dispositivo[0].IdDispositivo]
+    );
+
+    return { message: 'Dispositivo bloqueado exitosamente. Se ejecutará Wipe en su próxima petición.' };
+  }
+
+  // SPRINT 4: Método 4.1 - VerificarVersion (GET)
+  async verificarVersion(appVersion: string) {
+    // En un entorno real, la versión mínima se leería de la tabla Cat_Parametros
+    const versionMinimaRequerida = '1.0.0'; 
+    
+    // Lógica básica de comparación de versiones
+    const isObsolete = appVersion < versionMinimaRequerida;
+
+    if (isObsolete) {
+      throw new ForbiddenException('Update Required');
+    }
+
+    return { 
+      valid: true, 
+      message: 'Versión compatible' 
+    };
+  }
+
 }
