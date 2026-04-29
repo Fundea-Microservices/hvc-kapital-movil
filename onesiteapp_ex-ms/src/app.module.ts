@@ -18,11 +18,11 @@ import { SyncModule } from './modules/sync/sync.module';
     }),
     TypeOrmModule.forRoot({
       type: 'mssql',
-      host: 'localhost',       // ej: localhost o IP servidor
-      port: 5000,
-      username: 'sa', // Tu usuario de SQL Server (NO uses Autenticación de Windows)
-      password: 'OneSitePass@2026', // La contraseña de tu usuario
-      database: 'onesiteapp_ex', // El nombre exacto de la base de datos que creaste
+      host: process.env.DB_HOST,       // ej: localhost o IP servidor
+      port: Number(process.env.DB_PORT),
+      username: process.env.DB_USERNAME, // Tu usuario de SQL Server (NO uses Autenticación de Windows)
+      password: process.env.DB_PASSWORD, // La contraseña de tu usuario
+      database: process.env.DB_NAME, // El nombre exacto de la base de datos que creaste
       entities: [__dirname + '/**/*.entity{.ts,.js}', User],
 
       //entities: [User],
