@@ -2,6 +2,10 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ["./App.{js,jsx,ts,tsx}", "./src/**/*.{js,jsx,ts,tsx}"],
+  
+  // ESTA ES LA LÍNEA CRUCIAL PARA NATIVEWIND v4
+  presets: [require("nativewind/preset")],
+  
   theme: {
     extend: {
       colors: {

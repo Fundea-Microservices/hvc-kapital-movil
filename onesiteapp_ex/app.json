@@ -22,9 +22,10 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.onesiteapp_ex"
+      "package": "com.fundea.onesiteapp_ex"
     },
     "web": {
+      "bundler": "metro",
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
@@ -37,9 +38,13 @@
         "expo-build-properties",
         {
           "android": {
-            "kotlinVersion": "2.0.0",
+            "kotlinVersion": "2.1.0",
+            "minSdkVersion": 24,
             "packagingOptions": {
-              "pickFirst": ["**/libc++_shared.so"]
+              "pickFirst": [
+                "**/libc++_shared.so"
+              ],
+              "usesCleartextTraffic": true
             }
           }
         }
@@ -50,7 +55,13 @@
           "disableJsi": true
         }
       ]
-    ]
-    
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "881ee658-c07b-4d05-9b2a-02e19184c1d2"
+      }
+    },
+    "owner": "fundea"
   }
 }

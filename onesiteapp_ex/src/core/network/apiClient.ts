@@ -4,13 +4,39 @@ import { Alert } from 'react-native';
 import { useAuthStore } from '../../presentation/store/useAuthStore';
 import { wipeLocalDatabase } from '../../data/local/services/database.service'; 
 
+console.log("🌐 URL BASE CARGADA DESDE .ENV:", process.env.EXPO_PUBLIC_API_URL);
 // Usamos la variable de entorno 
-const baseURL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
+//const baseURL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api/v1';
+const baseURL = process.env.EXPO_PUBLIC_API_URL;
+
+console.log("🌐 URL BASE CARGADA DESDE baseURL:", baseURL);
 
 export const apiClient = axios.create({
   baseURL,
   timeout: 10000,
 });
+
+// 2. Interceptor de Peticiones (El radar antes del disparo)
+apiClient.interceptors.request.use((config) => {
+  const fullUrl = `${config.baseURL || ''}${config.url || ''}`;
+  console.log(`🚀 [AXIOS INIT] -> MÉTODO: ${config.method?.toUpperCase()} | URL EXACTA: ${fullUrl}`);
+  // Imprimir qué datos le estamos mandando al backend (ocultando contraseñas reales en logs de prod si es necesario)
+  if (config.data) {
+    console.log(`📦 [PAYLOAD ENVIADO]:`, JSON.stringify(config.data, null, 2));
+  }
+  return config;
+});
+
+// 3. Interceptor de Errores (El forense si falla)
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const fullUrl = `${error.config?.baseURL || ''}${error.config?.url || ''}`;
+    console.log(`❌ [AXIOS ERROR] -> FALLÓ LA RUTA: ${fullUrl}`);
+    console.log(`💬 DETALLE DEL ERROR:`, error.message);
+    return Promise.reject(error);
+  }
+);
 
 // INTERCEPTOR DE PETICIÓN (Request)
 apiClient.interceptors.request.use(
@@ -52,18 +78,29 @@ apiClient.interceptors.response.use(
 
     // 1. SPRINT 2: Manejo de Expiración de Token (401)
     if (error.response?.status === 401 && !originalRequest._retry) {
+      // Si el error 401 viene de intentar iniciar sesión, NO refresques nada, solo muestra el error.
+      if (originalRequest.url === '/auth/login') {
+        return Promise.reject(error);
+      }
+      // No intentar refrescar el token si estamos en Login O en Enrolamiento
+      const excludedUrls = ['/auth/login', '/devices/enroll'];
+      if (excludedUrls.includes(originalRequest.url)) {
+        return Promise.reject(error); // Deja pasar el error a la pantalla
+      }
+
       if (isRefreshing) {
         // Si ya se está refrescando, encolamos las peticiones
         return new Promise(function(resolve, reject) {
           failedQueue.push({ resolve, reject });
         }).then(token => {
           originalRequest.headers['Authorization'] = 'Bearer ' + token;
-          return apiClient(originalRequest);
+          return baseURL(originalRequest);
         }).catch(err => Promise.reject(err));
       }
 
       originalRequest._retry = true;
       isRefreshing = true;
+
 
       try {
         const refreshToken = await SecureStore.getItemAsync('refresh_token');
@@ -79,7 +116,7 @@ apiClient.interceptors.response.use(
         originalRequest.headers['Authorization'] = 'Bearer ' + newToken;
         
         processQueue(null, newToken);
-        return apiClient(originalRequest); // Reintenta la original
+        return baseURL(originalRequest); // Reintenta la original
 
       } catch (refreshError) {
         processQueue(refreshError, null);
@@ -114,4 +151,5 @@ apiClient.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+export default apiClient;
   

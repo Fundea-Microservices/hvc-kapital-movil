@@ -2,6 +2,7 @@
   "name": "onesiteapp_ex",
   "version": "1.0.0",
   "main": "index.ts",
+  "type": "commonjs",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
@@ -10,6 +11,7 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@expo/metro-config": "~55.0.9",
     "@morrowdigital/watermelondb-expo-plugin": "^2.3.3",
     "@nozbe/watermelondb": "^0.28.0",
     "@nozbe/with-observables": "^1.6.0",
@@ -18,7 +20,7 @@
     "big.js": "^7.0.1",
     "expo": "~55.0.8",
     "expo-application": "~55.0.10",
-    "expo-build-properties": "~55.0.10",
+    "expo-build-properties": "~55.0.13",
     "expo-constants": "~55.0.9",
     "expo-dev-client": "~55.0.18",
     "expo-device": "~55.0.10",
@@ -26,24 +28,33 @@
     "expo-sqlite": "~55.0.11",
     "expo-status-bar": "~55.0.4",
     "nativewind": "^4.2.3",
-    "prettier-plugin-tailwindcss": "^0.5.14",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-native": "0.83.2",
-    "react-native-reanimated": "^4.2.1",
-    "react-native-safe-area-context": "^5.7.0",
+    "react-native-reanimated": "4.2.1",
+    "react-native-safe-area-context": "~5.6.2",
     "react-native-web": "^0.21.0",
     "react-native-worklets": "0.7.2",
-    "tailwindcss": "^3.4.19",
     "zod": "^4.3.6",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@babel/plugin-proposal-decorators": "^7.29.0",
+    "@expo/config-plugins": "^55.0.8",
     "@types/big.js": "^6.2.2",
     "@types/react": "~19.2.2",
-    "babel-preset-expo": "^55.0.18",
+    "babel-preset-expo": "~55.0.8",
+    "prettier-plugin-tailwindcss": "^0.5.14",
+    "tailwindcss": "^3.4.19",
     "typescript": "~5.9.2"
+  },
+  "expo": {
+    "web": {
+      "bundler": "metro"
+    }
+  },
+  "overrides": {
+    "lightningcss": "1.30.1"
   },
   "private": true
 }

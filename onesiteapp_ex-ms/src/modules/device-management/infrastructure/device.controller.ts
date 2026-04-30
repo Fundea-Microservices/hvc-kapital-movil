@@ -7,14 +7,12 @@ import { ZodValidationPipe } from '../../../core/pipes/zod-validation.pipe';
 @Controller('api/v1/devices')
 export class DeviceController {
   constructor(private readonly deviceService: DeviceService) {}
-
   @Post('enroll')
   @UsePipes(new ZodValidationPipe(EnrollDeviceSchema)) 
   async enrollDevice(@Body() body: EnrollDeviceDto) {
     
     return await this.deviceService.enrolarEquipo(body);
   }
-
   // Nuevo Endpoint PUT para los Metadatos
   @Put('metadata')
   async updateMetadata(@Body() body: updateMetadataDto.UpdateMetadataDto) {
@@ -22,15 +20,12 @@ export class DeviceController {
     const validData = updateMetadataDto.UpdateMetadataSchema.parse(body);
     return await this.deviceService.actualizarInfo(validData);
   }
-
   // ... (métodos POST enroll y PUT metadata)
-
   // SPRINT 4: Botón de Pánico desde el BackOffice
 @Patch('block/:token')
   async blockDevice(@Param('token') token: string) {
     return await this.deviceService.darDeBaja(token);
   }
-
   // SPRINT 4: Validación de versión de la App
   // Validación de versión de la App (Middleware/Guard opcional en el futuro)
   @Get('version')

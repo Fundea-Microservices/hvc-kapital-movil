@@ -13,11 +13,9 @@ export class SyncService {
       `SELECT IdDispositivo, Estado FROM Dispositivos_AppEx WHERE DeviceToken = @0`,
       [deviceToken]
     );
-
     if (!dispositivo.length || !dispositivo[0].Estado) {
       throw new UnauthorizedException('Device Blocked');
     }
-
     const idDispositivo = dispositivo[0].IdDispositivo;
     const serverTimestamp = new Date().toISOString(); // Marca de tiempo del servidor para la App
 
