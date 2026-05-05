@@ -30,29 +30,26 @@
     },
     "plugins": [
       "expo-secure-store",
-      "expo-build-properties",
       "expo-sqlite",
-      "@morrowdigital/watermelondb-expo-plugin",
-      "@morrowdigital/watermelondb-expo-plugin",
+      [
+        "@morrowdigital/watermelondb-expo-plugin",
+        {
+          "disableJsi": true
+        }
+      ],
       [
         "expo-build-properties",
         {
           "android": {
             "kotlinVersion": "2.1.0",
             "minSdkVersion": 24,
+            "usesCleartextTraffic": true,
             "packagingOptions": {
               "pickFirst": [
                 "**/libc++_shared.so"
-              ],
-              "usesCleartextTraffic": true
+              ]
             }
           }
-        }
-      ],
-      [
-        "@morrowdigital/watermelondb-expo-plugin",
-        {
-          "disableJsi": true
         }
       ]
     ],

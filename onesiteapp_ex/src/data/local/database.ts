@@ -6,6 +6,10 @@ import MetadataSync from './models/MetadataSync';
 import CatParametros from './models/CatParametros';
 import UsuarioPerfil from './models/UsuarioPerfil';
 import CatMenu from './models/CatMenu';
+import LocalEncuesta from './models/LocalEncuesta';
+import LocalSeccion from './models/LocalSeccion';
+import LocalEstructuraPregunta from './models/LocalEstructuraPregunta';
+import LocalCaptura from './models/LocalCaptura';
 
 // 1. Configurar el adaptador para SQLite
 const adapter = new SQLiteAdapter({
@@ -26,5 +30,9 @@ export const database = new Database({
     CatParametros,
     UsuarioPerfil,
     CatMenu,
+    LocalEncuesta,
+    LocalSeccion,
+    LocalEstructuraPregunta,
+    LocalCaptura,
   ],
 });

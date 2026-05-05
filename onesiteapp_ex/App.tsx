@@ -16,6 +16,7 @@ import { useLogout } from './src/presentation/hooks/useLogout';
 // NUEVAS IMPORTACIONES DEL SPRINT 3
 import { DynamicMenu } from './src/presentation/components/MenuAccordion';
 import { runIncrementalSync } from './src/data/local/services/syncManager';
+import { SurveyFormScreen } from './src/presentation/components/Surveys/SurveyFormScreen';
 
 // 1. Instanciamos el QueryClient de TanStack
 const queryClient = new QueryClient();
@@ -71,7 +72,7 @@ export default function App() {
       ) : !isLoggedIn ? (
         <LoginScreen />
       ) : (
-        <DashboardScreen />
+        <SurveyFormScreen />
       )}
     </QueryClientProvider>
   );

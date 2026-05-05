@@ -2,60 +2,77 @@ import { synchronize } from '@nozbe/watermelondb/sync';
 import { database } from '../database';
 import { apiClient } from '../../../core/network/apiClient';
 
+/**
+ * El sistema ejecuta la sincronización maestra (Core, Estructura y Catálogos) 
+ * en una sola transacción unificada para garantizar la integridad de SQLite.
+ */
 export const runIncrementalSync = async () => {
   try {
     await synchronize({
       database,
-      // 1. pullChanges: TraerDeltas desde NestJS
-      pullChanges: async ({ lastPulledAt, schemaVersion, migration }) => {
-        // Convertimos el timestamp de Watermelon a ISO 8601 para NestJS
+      // 1. pullChanges: Traer todos los Deltas en paralelo
+      pullChanges: async ({ lastPulledAt }) => {
         const syncDate = lastPulledAt ? new Date(lastPulledAt).toISOString() : null;
 
-        // Construimos el mapa de fechas que espera nuestro DTO del backend
-        const lastSyncDates = {
-          cat_menu_appex: syncDate,
-          cat_parametros_appex: syncDate,
-        };
+        // Se ejecutan las 3 peticiones al mismo tiempo para maximizar la velocidad de red
+        const [coreRes, structureRes, catalogsRes] = await Promise.all([
+          apiClient.post('/sync/deltas', {
+            lastSyncDates: {
+              cat_menu_appex: syncDate,
+              cat_parametros_appex: syncDate,
+            }
+          }),
+          apiClient.post('/surveys/structure', { lastSyncDate: syncDate }),
+          apiClient.post('/surveys/catalogs', { lastSyncDate: syncDate }) // Integración del Sprint 6
+        ]);
 
-        // Petición POST al endpoint que creamos
-        const response = await apiClient.post('/sync/deltas', { lastSyncDates });
-
-        if (!response.data || !response.data.changes) {
-          throw new Error('Formato de deltas inválido recibido del servidor.');
+        // Se valida que todos los microservicios hayan respondido correctamente
+        if (!coreRes.data?.changes || !structureRes.data?.changes || !catalogsRes.data?.changes) {
+          throw new Error('Formato de deltas inválido recibido en uno de los microservicios.');
         }
 
-        const { changes, timestamp } = response.data;
+        // Se fusionan (Merge) todos los cambios en un solo objeto maestro para el UPSERT
+        const mergedChanges = {
+          ...coreRes.data.changes,
+          ...structureRes.data.changes,
+          ...catalogsRes.data.changes,
+        };
 
-        // Devolvemos los cambios y el timestamp del servidor para que Watermelon ejecute el UPSERT masivo
-        return { changes, timestamp: new Date(timestamp).getTime() };
+        // Se determina el timestamp más reciente para guardar en la memoria de Watermelon
+        const maxTimestamp = Math.max(
+          new Date(coreRes.data.timestamp).getTime(),
+          new Date(structureRes.data.timestamp).getTime(),
+          new Date(catalogsRes.data.timestamp).getTime()
+        );
+
+        return { changes: mergedChanges, timestamp: maxTimestamp };
       },
-
-      // 2. pushChanges: Enviar datos locales al servidor
-      // En este sprint el flujo indica que solo consumimos catálogos, por lo que lo dejamos vacío.
-      pushChanges: async ({ changes, lastPulledAt }) => {
-         // Se implementará en sprints futuros para formularios o encuestas offline
+      
+      // 2. pushChanges: Enviar datos locales al servidor (Pendiente Sprint 9)
+      pushChanges: async () => {
+        // En este sprint solo descargamos estructura y catálogos.
       },
-
-      // Opcional pero recomendado: forzar migraciones si es necesario
-      //migrationsEnabledAtVersion: 1,
+      
+      migrationsEnabledAtVersion: 1,
     });
 
-    // 3. ConfirmarSinc (ACK) - Regla Crítica 3.2
-    // Si la promesa de synchronize() se resuelve, el UPSERT fue 100% exitoso.
+    // 3. ConfirmarSinc (ACK) - Solo se envía si TODA la sincronización fue exitosa
     await apiClient.post('/sync/ack', {
       tablaNombre: 'Todas',
       exitoso: true,
     });
 
-    console.log("Sincronización incremental ejecutada con éxito.");
+    console.log("Sincronización Total (Core + SGRAS) ejecutada con éxito.");
 
   } catch (error) {
-    console.error("Error durante la sincronización:", error);
+    console.error("Error crítico durante la sincronización:", error);
     
-    // Opcional: Reportar ACK fallido al backend
+    // Reporte de ACK fallido al backend
     await apiClient.post('/sync/ack', {
       tablaNombre: 'Todas',
       exitoso: false,
     }).catch(() => {}); // Ignorar error si no hay red
+    
+    throw error; // Propagar el error para que la UI (ej. LoginScreen) pueda reaccionar
   }
 };
