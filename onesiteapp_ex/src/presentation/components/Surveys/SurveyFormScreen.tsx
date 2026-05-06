@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   ScrollView, 
   KeyboardAvoidingView, 
@@ -24,11 +24,16 @@ import { saveRespuestaOffline } from '../../../data/local/services/captura.servi
 import { evaluarSintaxis, evaluarVisibilidad } from '../../../core/utils/rulesEngine';
 import { buildAndSyncSurvey } from '../../../data/local/services/surveyBuilder.service';
 
+// 1. SOLUCIÓN: Definimos la interfaz para recibir la función de navegación
+interface SurveyFormScreenProps {
+  onVolverInicio?: () => void;
+}
+
 /**
  * Pantalla Maestra del Formulario SGRAS (Orquestador de Sprints 5-9).
  * Gestiona la navegación por secciones, el motor de reglas offline y la sincronización final.
  */
-export const SurveyFormScreen = () => {
+export const SurveyFormScreen = ({ onVolverInicio }: SurveyFormScreenProps) => {
   // Estado para el manejo de secciones (Foco Único - Sprint 6)
   const [expandedSectionId, setExpandedSectionId] = useState<string | null>('sec-1');
   
@@ -40,7 +45,6 @@ export const SurveyFormScreen = () => {
   const [cantidadLotes, setCantidadLotes] = useState(0);
 
   /** * Diccionario de respuestas en tiempo real para el motor de reglas.
-   * En una fase posterior, esto se cargará desde WatermelonDB al iniciar.
    */
   const [respuestas, setRespuestas] = useState<Record<string, string>>({
     '101': '', // Área Maíz
@@ -48,16 +52,10 @@ export const SurveyFormScreen = () => {
     '103': '', // Área Total (Calculada)
   });
 
-  /**
-   * El sistema alterna la visibilidad de las secciones del acordeón.
-   */
   const toggleSection = (sectionId: string) => {
     setExpandedSectionId(prev => prev === sectionId ? null : sectionId);
   };
 
-  /**
-   * El sistema ejecuta la cascada de validación, cálculos y auto-guardado (Sprint 7).
-   */
   const handleBlur = async (idPregunta: string) => {
     const valor = respuestas[idPregunta];
     
@@ -65,7 +63,6 @@ export const SurveyFormScreen = () => {
     await saveRespuestaOffline(idPregunta, valor);
 
     // 2. Ejecución del Motor de Cálculos (S3.1)
-    // Ejemplo: El Área Total [103] depende de [101] + [102]
     if (idPregunta === '101' || idPregunta === '102') {
       const resultado = evaluarSintaxis("[101] + [102]", respuestas);
       if (resultado !== null) {
@@ -76,9 +73,6 @@ export const SurveyFormScreen = () => {
     }
   };
 
-  /**
-   * El sistema recopila los datos locales y los envía al servidor (Sprint 9).
-   */
   const handleFinalizarSync = async () => {
     setIsSyncing(true);
     try {
@@ -86,12 +80,39 @@ export const SurveyFormScreen = () => {
       const resultado = await buildAndSyncSurvey('1');
       setIsSyncing(false);
       
-      if (resultado.success) {
-        Alert.alert("Éxito", `Encuesta enviada exitosamente. Folio: #${resultado.folio}`);
+      if (resultado.folio) {
+        Alert.alert("Éxito", `Encuesta enviada exitosamente. Folio: #${resultado.folio}`, [
+          { 
+            text: "Aceptar", 
+            onPress: () => {
+              // LIMPIAR EL FORMULARIO
+              setRespuestas({});
+              setCantidadLotes(0); // Buena práctica: limpiar también el contador de la matriz
+              
+              // REGRESAR AL DASHBOARD
+              if (onVolverInicio) onVolverInicio();
+            } 
+          }
+        ]);
       }
     } catch (error) {
       setIsSyncing(false);
-      Alert.alert("Modo Offline", "Los datos se guardaron localmente y se enviarán cuando detecte conexión.");
+      
+      // 2. SOLUCIÓN: Sintaxis correcta del arreglo de botones para el Alert
+      Alert.alert(
+        "Modo Offline", 
+        "Los datos se guardaron localmente y se enviarán cuando detecte conexión.", 
+        [
+          { 
+            text: "Entendido", 
+            onPress: () => {
+              setRespuestas({});
+              setCantidadLotes(0);
+              if (onVolverInicio) onVolverInicio();
+            } 
+          }
+        ]
+      );
     }
   };
 
@@ -118,7 +139,6 @@ export const SurveyFormScreen = () => {
           keyboardShouldPersistTaps="handled"
         >
           
-          {/* SECCIÓN 1: DATOS DE CULTIVO (Cálculos y Visibilidad) */}
           <SurveySection 
             titulo="Áreas de Cultivo" 
             estado={respuestas['101'] ? 'completado' : 'vacio'} 
@@ -156,7 +176,6 @@ export const SurveyFormScreen = () => {
             />
           </SurveySection>
 
-          {/* SECCIÓN 2: MATRICES (Registro de Lotes) */}
           <SurveySection 
             titulo="Detalle de Lotes" 
             estado={cantidadLotes > 0 ? 'completado' : 'vacio'} 
@@ -170,23 +189,21 @@ export const SurveyFormScreen = () => {
             />
           </SurveySection>
 
-          {/* Espaciador para no tapar el último campo con el botón */}
           <View className="h-20" />
         </ScrollView>
 
-        {/* Botón de Acción Principal (Sprint 9) */}
         <View className="p-6 bg-white border-t border-gray-100 shadow-2xl">
           <TouchableOpacity 
             className="bg-[#1E3A8A] rounded-2xl py-4 flex-row justify-center items-center shadow-lg"
             onPress={handleFinalizarSync}
           >
-            <Feather classNameame="cloud-upload" size={20} color="white" />
+            {/* 3. SOLUCIÓN: Nombre de propiedad corregido */}
+            <Feather name="upload-cloud" size={20} color="white" />
             <Text className="text-white font-bold ml-3 text-lg">Finalizar Encuesta</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
 
-      {/* Subformulario Modal de Matrices (Sprint 8) */}
       <SurveyMatrixSubform 
         visible={modalMatrizVisible}
         tituloMatriz="Registro de Lotes"
@@ -194,7 +211,6 @@ export const SurveyFormScreen = () => {
         onFilaGuardada={() => setCantidadLotes(prev => prev + 1)}
       />
 
-      {/* Modal de Sincronización en Progreso (Sprint 9) */}
       <Modal visible={isSyncing} transparent animationType="fade">
         <View className="flex-1 bg-black/60 items-center justify-center px-6">
           <View className="bg-white w-full max-w-[300px] rounded-[40px] p-10 items-center">

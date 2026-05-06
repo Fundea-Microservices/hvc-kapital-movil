@@ -2,6 +2,7 @@ import { Controller, Post, Get, Body, Headers, UnauthorizedException } from '@ne
 import { SyncService } from '../application/sync.service';
 import * as syncDeltasDto from '../domain/dtos/sync-deltas.dto';
 
+
 @Controller('api/v1/sync')
 export class SyncController {
   constructor(private readonly syncService: SyncService) {}
@@ -35,5 +36,16 @@ export class SyncController {
     
     const validData = syncDeltasDto.AckSyncSchema.parse(body);
     return await this.syncService.confirmarSincronizacion(validData, deviceToken);
+  }
+  @Post('push')
+  async pushChanges(
+    @Body() payload: any,
+    @Headers('x-device-token') deviceToken: string
+    // @Headers('x-user-id') userId: string // Opcional si necesitas saber qué usuario respondió
+  ) {
+    if (!deviceToken) throw new UnauthorizedException('DeviceToken es requerido para enviar datos');
+    
+    // Le pasamos los 'changes' (respuestas creadas o modificadas) a tu servicio
+    return await this.syncService.processPush(payload.changes);
   }
 }

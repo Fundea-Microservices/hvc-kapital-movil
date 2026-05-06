@@ -3,76 +3,91 @@ import { database } from '../database';
 import { apiClient } from '../../../core/network/apiClient';
 
 /**
- * El sistema ejecuta la sincronización maestra (Core, Estructura y Catálogos) 
- * en una sola transacción unificada para garantizar la integridad de SQLite.
+ * Función auxiliar para asegurar que siempre existan los arreglos created, updated y deleted.
+ * Esto evita el error "Cannot read property 'length' of undefined".
  */
-export const runIncrementalSync = async () => {
+const safeMap = (tableObj: any, idKey: string) => ({
+  created: (tableObj?.created || []).map((row: any) => ({ 
+    ...row, 
+    id: row[idKey]?.toString() || row.id?.toString() 
+  })),
+  updated: (tableObj?.updated || []).map((row: any) => ({ 
+    ...row, 
+    id: row[idKey]?.toString() || row.id?.toString() 
+  })),
+  deleted: tableObj?.deleted || []
+});
+
+export const runFullSync = async () => {
   try {
     await synchronize({
       database,
-      // 1. pullChanges: Traer todos los Deltas en paralelo
       pullChanges: async ({ lastPulledAt }) => {
         const syncDate = lastPulledAt ? new Date(lastPulledAt).toISOString() : null;
 
-        // Se ejecutan las 3 peticiones al mismo tiempo para maximizar la velocidad de red
+        // Peticiones paralelas al backend
         const [coreRes, structureRes, catalogsRes] = await Promise.all([
           apiClient.post('/sync/deltas', {
-            lastSyncDates: {
-              cat_menu_appex: syncDate,
-              cat_parametros_appex: syncDate,
-            }
+            lastSyncDates: { cat_menu_appex: syncDate, cat_parametros_appex: syncDate }
           }),
           apiClient.post('/surveys/structure', { lastSyncDate: syncDate }),
-          apiClient.post('/surveys/catalogs', { lastSyncDate: syncDate }) // Integración del Sprint 6
+          apiClient.post('/surveys/catalogs', { lastSyncDate: syncDate })
         ]);
 
-        // Se valida que todos los microservicios hayan respondido correctamente
-        if (!coreRes.data?.changes || !structureRes.data?.changes || !catalogsRes.data?.changes) {
-          throw new Error('Formato de deltas inválido recibido en uno de los microservicios.');
-        }
+        // Extraemos los objetos de cambios (o un objeto vacío si fallan)
+        const structChanges = structureRes.data?.changes || {};
+        const coreChanges = coreRes.data?.changes || {};
+        const catChanges = catalogsRes.data?.changes || {};
 
-        // Se fusionan (Merge) todos los cambios en un solo objeto maestro para el UPSERT
+        /**
+         * FUSIÓN Y MAPEO DE TABLAS
+         * Mapeamos del nombre del Servidor (PascalCase) al nombre Local (Snake_case)
+         */
         const mergedChanges = {
-          ...coreRes.data.changes,
-          ...structureRes.data.changes,
-          ...catalogsRes.data.changes,
+          // 1. Menú y Parámetros (Core)
+          cat_menu_appex: safeMap(coreChanges.cat_menu_appex, 'id'),
+          cat_parametros_appex: safeMap(coreChanges.cat_parametros_appex, 'id'),
+
+          // 2. Estructura de Encuestas (Mapeo de IDs específicos de SQL)
+          local_encuesta: safeMap(structChanges.Local_Encuesta, 'IdEncuesta'),
+          local_seccion: safeMap(structChanges.Local_Seccion, 'IdSeccion'),
+          local_estructura_pregunta: safeMap(structChanges.Local_Estructura_Pregunta, 'IdPregunta'),
+
+          // 3. Catálogos (Si el servidor los envía bajo llaves específicas, añadirlas aquí)
+          ...catChanges 
         };
 
-        // Se determina el timestamp más reciente para guardar en la memoria de Watermelon
+        // Calculamos el timestamp más reciente
         const maxTimestamp = Math.max(
-          new Date(coreRes.data.timestamp).getTime(),
-          new Date(structureRes.data.timestamp).getTime(),
-          new Date(catalogsRes.data.timestamp).getTime()
+          new Date(coreRes.data?.timestamp || 0).getTime(),
+          new Date(structureRes.data?.timestamp || 0).getTime(),
+          new Date(catalogsRes.data?.timestamp || 0).getTime(),
+          Date.now() // Fallback al tiempo actual
         );
 
         return { changes: mergedChanges, timestamp: maxTimestamp };
       },
       
-      // 2. pushChanges: Enviar datos locales al servidor (Pendiente Sprint 9)
-      pushChanges: async () => {
-        // En este sprint solo descargamos estructura y catálogos.
+      pushChanges: async ({ changes }) => {
+        const respuestasToPush = (changes as any).local_captura;
+        
+        if (respuestasToPush && (respuestasToPush.created.length > 0 || respuestasToPush.updated.length > 0)) {
+           await apiClient.post('/surveys/submit', { 
+             idEncuesta: 1, 
+             respuestas: [...respuestasToPush.created, ...respuestasToPush.updated] 
+           });
+        }
       },
-      
-      migrationsEnabledAtVersion: 1,
     });
 
-    // 3. ConfirmarSinc (ACK) - Solo se envía si TODA la sincronización fue exitosa
-    await apiClient.post('/sync/ack', {
-      tablaNombre: 'Todas',
-      exitoso: true,
-    });
-
-    console.log("Sincronización Total (Core + SGRAS) ejecutada con éxito.");
+    // ACK de éxito
+    await apiClient.post('/sync/ack', { tablaNombre: 'Todas', exitoso: true });
+    console.log("🚀 Sincronización Total ejecutada con éxito.");
 
   } catch (error) {
-    console.error("Error crítico durante la sincronización:", error);
+    console.error("❌ Error crítico durante la sincronización:", error);
     
-    // Reporte de ACK fallido al backend
-    await apiClient.post('/sync/ack', {
-      tablaNombre: 'Todas',
-      exitoso: false,
-    }).catch(() => {}); // Ignorar error si no hay red
-    
-    throw error; // Propagar el error para que la UI (ej. LoginScreen) pueda reaccionar
+    await apiClient.post('/sync/ack', { tablaNombre: 'Todas', exitoso: false }).catch(() => {});
+    throw error;
   }
 };

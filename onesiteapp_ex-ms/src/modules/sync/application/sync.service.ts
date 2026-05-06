@@ -142,4 +142,114 @@ export class SyncService {
 
     return configGlobal;
   }
+
+  // ==========================================
+  // 1. PULL: WatermelonDB pide datos nuevos
+  // ==========================================
+ async getChanges(lastPulledAt: number) {
+
+    // 1. Preparar el timestamp de comparación
+    // WatermelonDB envía el timestamp en milisegundos.
+    const lastSyncDate = lastPulledAt 
+      ? new Date(lastPulledAt).toISOString() 
+      : '2016-01-01T00:00:00Z'; // Fecha base para descarga total propuesta de 10 años
+
+    const serverTimestamp = new Date().getTime();
+    const changes: any = {
+      app_ex_encuesta: { created: [], updated: [], deleted: [] },
+      app_ex_pregunta: { created: [], updated: [], deleted: [] },
+    };
+    try {
+      // --- LÓGICA PARA ENCUESTAS ---
+      // Se buscan encuestas creadas o modificadas después de la última sincronización
+      const encuestas = await this.dataSource.query(
+        `SELECT * FROM appEx_Encuesta WHERE FechaModificacion > @0`,
+        [lastSyncDate]
+      );
+
+      encuestas.forEach(row => {
+        const item = {
+          id: row.IdEncuesta.toString(),
+          nombre: row.Nombre,
+          estado: row.Estado,
+        };
+        
+        // Si la fecha de creación es muy cercana a la de modificación, es "created", si no, "updated"
+        // Para simplificar la lógica offline, WatermelonDB acepta todo en "created" y hace UPSERT automático
+        changes.app_ex_encuesta.created.push(item);
+      });
+
+      // --- LÓGICA PARA PREGUNTAS ---
+      // Se obtienen las preguntas unificadas con sus reglas lógicas
+      const preguntas = await this.dataSource.query(
+        `SELECT p.*, r.SintaxisCalculo, r.ReglaValidacion, r.ReglaVisibilidad 
+         FROM appEx_Pregunta p
+         LEFT JOIN appEx_Reglas r ON p.IdPregunta = r.IdPregunta
+         WHERE p.FechaModificacion > @0 OR r.FechaModificacion > @0`,
+        [lastSyncDate]
+      );
+
+      preguntas.forEach(row => {
+        changes.app_ex_pregunta.created.push({
+          id: row.IdPregunta.toString(),
+          encuesta_id: row.IdSeccion.toString(), // En este motor dinámico vinculamos a la sección/encuesta
+          tipo_input: row.TipoDato,
+          nombre_input: row.Etiqueta,
+          obligatorio: row.EsObligatorio ? true : false,
+          orden: row.Orden,
+          valor_defecto: row.ValorDefecto || null,
+          opciones: row.Opciones || null, // Se envía el string JSON de opciones
+          catalogo: row.Catalogo || null
+        });
+      });
+
+      // Nota: Para implementar 'deleted', se requeriría una tabla de auditoría (Soft Delete)
+      // que registre los IDs eliminados y su fecha de borrado.
+
+      return { 
+        changes, 
+        timestamp: serverTimestamp 
+      };
+
+    } catch (error) {
+      console.error('Error al generar Deltas para WatermelonDB:', error);
+      throw error;
+    }
+  }
+
+  async processPush(changes: any) {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const respuestasToCreate = changes.app_ex_respuesta?.created || [];
+      const respuestasToUpdate = changes.app_ex_respuesta?.updated || [];
+
+      // Procesar inserciones
+      for (const resp of respuestasToCreate) {
+        await queryRunner.query(
+          `INSERT INTO appEx_Respuestas (IdPregunta, IdEncuesta, Valor, SyncStatus) VALUES (@0, @1, @2, 'SYNCED')`,
+          [resp.pregunta_id, resp.encuesta_id, resp.valor]
+        );
+      }
+
+      // Procesar actualizaciones
+      for (const resp of respuestasToUpdate) {
+        await queryRunner.query(
+          `UPDATE appEx_Respuestas SET Valor = @0, SyncStatus = 'SYNCED' WHERE IdPregunta = @1 AND IdEncuesta = @2`,
+          [resp.valor, resp.pregunta_id, resp.encuesta_id]
+        );
+      }
+
+      await queryRunner.commitTransaction();
+      return { success: true };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      console.error('Error procesando PUSH de WatermelonDB:', error);
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
 }

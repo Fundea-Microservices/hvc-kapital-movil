@@ -1,73 +1,90 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Button, StyleSheet, Alert, TouchableOpacity, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Keyboard } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Keyboard, Alert } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { useMutation } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 
 import { loginApi, getPermisosApi } from '../../../data/remote/auth.api';
-import { saveUserProfileLocal } from '../../../data/local/services/user.service';
 import { useAuthStore } from '../../store/useAuthStore';
+import { authLocalService } from '../../../data/local/services/authLocalService';
+import { runFullSync } from '../../../data/local/services/syncManager';
 
-// Unificamos el estado del Modal
 type LoginModalState = 'none' | 'syncing' | 'error';
 
 export const LoginScreen = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-
-  // Estados para los Modales de los Mockups
- // Estado único para controlar la UI del modal
   const [modalState, setModalState] = useState<LoginModalState>('none');
   const [errorMessage, setErrorMessage] = useState('Credenciales incorrectas');
   
-  const setLogin = useAuthStore((state) => state.setLogin);
+  // Extraemos las funciones del store de forma segura
+  const setLoggedIn = useAuthStore((state) => state.setLoggedIn);
+
+  // --- LÓGICA DE LOGIN ---
   const loginMutation = useMutation({
-    mutationFn: loginApi,
+    mutationFn: () => loginApi({ username, password }),
     onMutate: () => {
-      Keyboard.dismiss(); // Escondemos el teclado para evitar bugs gráficos en Android
+      Keyboard.dismiss();
       setModalState('syncing');
     },
     onSuccess: async (data) => {
       try {
+        // 1. Guardar tokens de seguridad (Venían del loginApi)
         await SecureStore.setItemAsync('token_sesion', data.token_sesion);
         await SecureStore.setItemAsync('refresh_token', data.refreshToken);
         await SecureStore.setItemAsync('user_id', data.user_id.toString());
 
-        const perfil = await getPermisosApi(data.token_sesion);
+        // 2. Obtener perfil completo del servidor (NestJS)
+        const perfilServidor = await getPermisosApi(data.token_sesion);
         
-        await saveUserProfileLocal({
-          id_usuario: data.user_id,
-          nombre: username,
-          rol: perfil.rol,
-          permisos: perfil.permisosGranulares
+        console.log("📥 Perfil recibido para guardar:", perfilServidor);
+
+        // 3. GUARDADO OFFLINE
+        // Usamos los campos EXACTOS que vimos en tus logs: IdUsuario, NombreCompleto, etc.
+        await authLocalService.savePerfilOffline({
+          IdUsuario: data.user_id, // Usamos el ID que vino del login
+          NombreCompleto: perfilServidor.NombreCompleto || username,
+          RolNombre: perfilServidor.RolNombre || 'Usuario',
+          Permisos: perfilServidor.Permisos || {}
         });
 
+        // 4. ÉXITO: Cambiamos estado global y cerramos modal
+        // Importante: setLoggedIn dispara el re-renderizado de App.tsx para ir al Dashboard
         setModalState('none');
-        setLogin(data.token_sesion, data.user_id);
+        setLoggedIn(data.token_sesion, data.user_id);
+        
+        // 5. SINCRONIZACIÓN: En segundo plano
+        runFullSync().catch((err) => console.error("Error en sincro inicial:", err));
+
       } catch (error) {
-        setErrorMessage('Error al guardar el perfil offline');
+        console.error("❌ Error en proceso post-login:", error);
+        setErrorMessage('Error al preparar la base de datos local');
         setModalState('error');
       }
     },
     onError: (error: any) => {
-      if (error.response?.status !== 403) {
-        // Obtenemos el mensaje exacto del backend o usamos uno por defecto
-        setErrorMessage(error.response?.data?.message || 'Credenciales incorrectas');
-        setModalState('error');
-      } else {
-         setModalState('none'); // Si es 403, el interceptor ya está haciendo el Wipe
-      }
+      console.error("❌ Error en Login:", error);
+      setErrorMessage(error.response?.data?.message || 'Credenciales incorrectas');
+      setModalState('error');
     },
   });
 
-  const handleLogin = () => {
-    if (username.length > 0 && password.length > 0) {
-      loginMutation.mutate({ username, password });
+  const onPressLogin = () => {
+    if (!username.trim() || !password.trim()) {
+      setErrorMessage('Llene todos los campos');
+      setModalState('error');
+      return;
     }
+    loginMutation.mutate();
   };
 
+  // --- ELIMINADA LA FUNCIÓN handleLogin DUPLICADA QUE CAUSABA ERROR ---
+
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1 bg-[#F3F4F6]">
+    <KeyboardAvoidingView 
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+      className="flex-1 bg-[#F3F4F6]"
+    >
       <ScrollView contentContainerStyle={{ flexGrow: 1 }} bounces={false} keyboardShouldPersistTaps="handled">
         <View className="flex-1 items-center justify-center px-6 py-10">
           
@@ -102,43 +119,39 @@ export const LoginScreen = () => {
               <TextInput
                 className="bg-[#F9FAFB] border border-gray-200 rounded-2xl p-4 text-gray-800 text-base"
                 placeholder="Ingrese su contraseña"
-                secureTextEntry
                 value={password}
                 onChangeText={setPassword}
+                secureTextEntry
               />
             </View>
 
             <TouchableOpacity 
-              className="bg-[#1E3A8A] rounded-2xl py-4 items-center shadow-lg active:opacity-90"
-              onPress={handleLogin}
-              disabled={username.length === 0 || password.length === 0}
+              className={`rounded-2xl py-4 items-center shadow-lg ${username && password ? 'bg-[#1E3A8A]' : 'bg-gray-400'}`}
+              onPress={onPressLogin}
+              disabled={!username || !password || loginMutation.isPending}
             >
-              <Text className="text-white font-bold text-lg">Ingresar</Text>
+              <Text className="text-white font-bold text-lg">
+                {loginMutation.isPending ? 'Validando...' : 'Ingresar'}
+              </Text>
             </TouchableOpacity>
           </View>
-
         </View>
       </ScrollView>
 
-      {/* --- UN SOLO MODAL MAESTRO --- */}
+      {/* Modal Maestro */}
       <Modal visible={modalState !== 'none'} transparent animationType="fade">
         <View className="flex-1 bg-black/50 items-center justify-center px-6">
-          
           {modalState === 'syncing' ? (
-            // UI DE SINCRONIZACIÓN
             <View className="bg-white w-full max-w-[280px] rounded-[40px] p-10 items-center shadow-2xl">
               <ActivityIndicator size="large" color="#1E3A8A" />
-              <Text className="text-gray-700 text-lg font-bold mt-6 text-center">Sincronizando datos...</Text>
+              <Text className="text-gray-700 text-lg font-bold mt-6 text-center">Iniciando sesión...</Text>
             </View>
           ) : (
-            // UI DE ERROR
             <View className="bg-white w-full max-w-[320px] rounded-[40px] p-10 items-center shadow-2xl">
               <View className="bg-[#EF4444] w-20 h-20 rounded-full items-center justify-center mb-6">
                 <Feather name="x" size={48} color="white" />
               </View>
-              <Text className="text-xl font-bold text-gray-800 mb-10 text-center">
-                {errorMessage}
-              </Text>
+              <Text className="text-xl font-bold text-gray-800 mb-10 text-center">{errorMessage}</Text>
               <TouchableOpacity 
                 className="bg-[#1E3A8A] w-full rounded-2xl py-4 items-center"
                 onPress={() => setModalState('none')}
@@ -147,10 +160,8 @@ export const LoginScreen = () => {
               </TouchableOpacity>
             </View>
           )}
-
         </View>
       </Modal>
-
     </KeyboardAvoidingView>
   );
 };

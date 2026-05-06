@@ -1,55 +1,77 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface AuthState {
-  // Fase 1: Enrolamiento
   isEnrolled: boolean;
   deviceToken: string | null;
-  // Fase 2: Login
   isLoggedIn: boolean;
-  sessionToken: string | null;
+  token: string | null;
   userId: number | null;
 
-
-  setEnrollment: (token: string) => void;
-  setLogin: (sessionToken: string, userId: number) => void;
+  // Acciones
+  setEnrolled: (token: string) => void;
+  setLoggedIn: (token: string, userId: number) => void;
+  
+  // Esta es la función que tu App.tsx necesita para arrancar:
   checkLocalState: (
-    enrolled: boolean, dToken: string | null, 
-    loggedIn: boolean, sToken: string | null, uId: number | null
+    enrolled: boolean, 
+    dToken: string | null, 
+    loggedIn: boolean, 
+    uToken: string | null, 
+    uId: number | null
   ) => void;
-  wipeData: () => void; // Regla 4.3: Interceptor
-  //checkLocalEnrollment: (isEnrolled: boolean, token: string | null) => void;
+
+  logout: () => void;
+  wipeData: () => void;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
-  isEnrolled: false,
-  deviceToken: null,
-  isLoggedIn: false,
-  sessionToken: null,
-  userId: null,
-  
-  // Se llama cuando el enrolamiento es exitoso
-  setEnrollment: (token) => set({ isEnrolled: true, deviceToken: token }),
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
+      isEnrolled: false,
+      deviceToken: null,
+      isLoggedIn: false,
+      token: null,
+      userId: null,
 
-  setLogin: (token, id) => set({ isLoggedIn: true, sessionToken: token, userId: id }),
+      setEnrolled: (token) => set({ 
+        isEnrolled: true, 
+        deviceToken: token 
+      }),
 
-  checkLocalState: (enrolled, dToken, loggedIn, sToken, uId) => set({ 
-    isEnrolled: enrolled, 
-    deviceToken: dToken,
-    isLoggedIn: loggedIn,
-    sessionToken: sToken,
-    userId: uId
-  }),
-  
-  // Se llama al iniciar la app para cargar datos desde SecureStore
-  //checkLocalEnrollment: (enrolled, token) => set({ isEnrolled: enrolled, deviceToken: token }),
+      setLoggedIn: (token, userId) => set({ 
+        isLoggedIn: true, 
+        token: token, 
+        userId: userId 
+      }),
 
-  // Método drástico para cuando el dispositivo es bloqueado (403)
-  wipeData: () => set({
-    isEnrolled: false,
-    deviceToken: null,
-    isLoggedIn: false,
-    sessionToken: null,
-    userId: null
-  }),
+      // Sincroniza el estado guardado con el estado de la app al iniciar
+      checkLocalState: (enrolled, dToken, loggedIn, uToken, uId) => set({
+        isEnrolled: enrolled,
+        deviceToken: dToken,
+        isLoggedIn: loggedIn,
+        token: uToken,
+        userId: uId
+      }),
 
-}));
+      logout: () => set({
+        isLoggedIn: false,
+        token: null,
+        userId: null
+      }),
+
+      wipeData: () => set({
+        isEnrolled: false,
+        deviceToken: null,
+        isLoggedIn: false,
+        token: null,
+        userId: null
+      }),
+    }),
+    {
+      name: 'fundea-auth-storage', 
+      storage: createJSONStorage(() => AsyncStorage),
+    }
+  )
+);

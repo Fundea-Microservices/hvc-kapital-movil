@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 5, // Incrementa esto cada vez que cambies la estructura
+  version: 1, // Incrementa esto cada vez que cambies la estructura 11
   tables: [
     // Tabla para control de sincronización por tabla (Regla 4.4 y 4.5)
     tableSchema({
@@ -39,6 +39,7 @@ export const schema = appSchema({
         { name: 'titulo', type: 'string' },
         { name: 'icono', type: 'string', isOptional: true },
         { name: 'orden', type: 'number' },
+        { name: 'seccion', type: 'string', isOptional: true },
         { name: 'ruta_pantalla', type: 'string', isOptional: true },
       ],
     }),
@@ -69,6 +70,7 @@ export const schema = appSchema({
     tableSchema({
       name: 'local_estructura_pregunta',
       columns: [
+        { name: 'id_encuesta', type: 'string',isIndexed: true },
         { name: 'id_seccion', type: 'string', isIndexed: true },
         { name: 'id_matriz_padre', type: 'string', isOptional: true },
         { name: 'tipo_dato', type: 'string' },
@@ -88,6 +90,7 @@ export const schema = appSchema({
       name: 'local_captura',
       columns: [
         { name: 'id_pregunta', type: 'string', isIndexed: true },
+        { name: 'id_encuesta', type: 'string', isIndexed: true },
         { name: 'valor', type: 'string', isOptional: true },
         { name: 'uuid_instancia', type: 'string', isOptional: true },
         { name: 'estado_sincro', type: 'number' },
@@ -104,5 +107,37 @@ export const schema = appSchema({
         { name: 'id_padre_opcion', type: 'string', isOptional: true },
       ],
     }),
+
+    tableSchema({
+      name: 'app_ex_encuesta',
+      columns: [
+        { name: 'nombre', type: 'string' },
+        { name: 'estado', type: 'boolean' },
+      ],
+    }),
+    tableSchema({
+      name: 'app_ex_pregunta',
+      columns: [
+        { name: 'id_encuesta', type: 'string', isIndexed: true },
+        { name: 'tipo_input', type: 'string' }, // 'TEXT', 'NUMBER', 'SELECT', 'DATE'
+        { name: 'nombre_input', type: 'string' },
+        { name: 'obligatorio', type: 'boolean' },
+        { name: 'orden', type: 'number' },
+        { name: 'valor_defecto', type: 'string', isOptional: true },
+        { name: 'opciones', type: 'string', isOptional: true }, // JSON string: '["Opcion A", "Opcion B"]'
+        { name: 'catalogo', type: 'string', isOptional: true },
+      ],
+    }),
+    tableSchema({
+      name: 'app_ex_respuesta',
+      columns: [
+        { name: 'pregunta_id', type: 'string', isIndexed: true },
+        { name: 'id_encuesta', type: 'string', isIndexed: true },
+        { name: 'valor', type: 'string', isOptional: true },
+        { name: 'sync_status', type: 'string' }, // 'PENDING' o 'SYNCED'
+      ],
+    }),
+
+
   ],
 });

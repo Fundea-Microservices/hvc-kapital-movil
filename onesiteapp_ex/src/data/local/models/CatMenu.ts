@@ -8,5 +8,6 @@ export default class CatMenu extends Model {
   @field('titulo') titulo!: string;
   @field('icono') icono!: string | null;
   @field('orden') orden!: number;
+  @field('seccion') seccion!: string;
   @field('ruta_pantalla') ruta_pantalla!: string | null;
 }

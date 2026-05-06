@@ -10,12 +10,17 @@ import LocalEncuesta from './models/LocalEncuesta';
 import LocalSeccion from './models/LocalSeccion';
 import LocalEstructuraPregunta from './models/LocalEstructuraPregunta';
 import LocalCaptura from './models/LocalCaptura';
+import AppExEncuesta from './models/AppExEncuesta';
+import AppExPregunta from './models/AppExPregunta';
+import AppExRespuesta from './models/AppExRespuesta';
+import LocalCatalogo from './models/LocalCatalogo';
+import { migrations } from './migrations';
 
 // 1. Configurar el adaptador para SQLite
 const adapter = new SQLiteAdapter({
   schema,
   // (Opcional) Migraciones: las configuraremos en el futuro si el esquema cambia
-  // migrations,
+  //migrations,
   jsi: false, // Habilita JSI para un rendimiento 2x-3x más rápido en Android/iOS
   onSetUpError: error => {
     console.error('Error al configurar la base de datos local:', error);
@@ -34,5 +39,6 @@ export const database = new Database({
     LocalSeccion,
     LocalEstructuraPregunta,
     LocalCaptura,
+    LocalCatalogo,
   ],
 });

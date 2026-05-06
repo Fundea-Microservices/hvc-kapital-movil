@@ -43,6 +43,7 @@ export interface TokenPayload {
 
 // Interfaz para la respuesta de permisos
 export interface PermisosResponse {
+  [x: string]: string;
   rol: string;
   accesos: {
     lectura: boolean;
