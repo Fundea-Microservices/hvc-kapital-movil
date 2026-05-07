@@ -3,7 +3,7 @@ import { DataSource } from 'typeorm';
 
 @Injectable()
 export class SurveysService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(private readonly dataSource: DataSource) { }
 
   /**
    * El servicio obtiene la estructura maestra de la encuesta.
@@ -11,7 +11,7 @@ export class SurveysService {
    */
   async getSurveyStructure(lastSyncDate: string | null) {
     const serverTimestamp = new Date().toISOString();
-    
+
     // Se inicializa el objeto de cambios exigido por WatermelonDB
     const changes: any = {
       local_encuesta: { created: [], updated: [], deleted: [] },
@@ -37,7 +37,7 @@ export class SurveysService {
       changes.local_seccion.created.push({
         id: row.IdSeccion.toString(),
         id_encuesta: row.IdEncuesta.toString(),
-        titulo: row.Titulo,
+        nombre: row.Titulo || row.Nombre, // <--- Cambiamos 'titulo' por 'nombre'
         orden: row.Orden,
         es_visible_default: row.EsVisibleDefault ? 1 : 0
       });
@@ -55,6 +55,13 @@ export class SurveysService {
         id: row.IdPregunta.toString(),
         id_seccion: row.IdSeccion.toString(),
         id_matriz_padre: row.IdMatrizPadre ? row.IdMatrizPadre.toString() : null,
+
+        // --- CAMPOS CRÍTICOS AGREGADOS ---
+        etiqueta: row.Etiqueta,    // <--- ESTO FALTABA
+        opciones: row.Opciones,    // <--- ESTO FALTABA (para Radio/Checkbox)
+        es_obligatorio: row.EsObligatorio ? 1 : 0, // <--- ESTO FALTABA
+        // ---------------------------------
+
         tipo_dato: row.TipoDato,
         origen_datos_tipo: row.OrigenDatosTipo,
         origen_datos_cmd: row.OrigenDatosCmd,
@@ -75,14 +82,14 @@ export class SurveysService {
    */
   async getCatalogs(lastSyncDate: string | null) {
     const serverTimestamp = new Date().toISOString();
-    
+
     const changes: any = {
       local_catalogos: { created: [], updated: [], deleted: [] },
     };
 
     // Se extraen los catálogos de la base de datos
     const catalogos = await this.dataSource.query(`SELECT * FROM appEx_Catalogos_Maestro`);
-    
+
     catalogos.forEach(row => {
       changes.local_catalogos.created.push({
         id: row.IdCatalogo.toString(),
@@ -101,7 +108,7 @@ export class SurveysService {
    */
   async submitSurvey(userId: number, payload: any) {
     const { idEncuesta, respuestas } = payload;
-    
+
     // El sistema inicia una Transacción SQL para asegurar integridad.
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -115,23 +122,23 @@ export class SurveysService {
           `INSERT INTO appEx_Respuestas (IdEncuesta, IdPregunta, UUID_Instancia, Valor)
            VALUES (@0, @1, @2, @3)`,
           [
-            idEncuesta, 
-            resp.idPregunta, 
-            resp.uuidInstancia || null, 
+            idEncuesta,
+            resp.idPregunta,
+            resp.uuidInstancia || null,
             resp.valor || null
           ]
         );
       }
-      
+
       await queryRunner.commitTransaction();
       return { success: true, message: 'Encuesta sincronizada correctamente' };
-      
+
     } catch (error: any) {
       // AQUÍ ESTÁ LA MAGIA: Imprimir el error exacto de SQL en la consola
       console.error('❌ ERROR CRÍTICO EN SQL (submitSurvey):', error.message || error);
-      
+
       await queryRunner.rollbackTransaction();
-      
+
       // Retornar el mensaje real al frontend para depuración (Opcional en Prod, útil en Dev)
       throw new Error(`Error BD: ${error.message}`);
     } finally {

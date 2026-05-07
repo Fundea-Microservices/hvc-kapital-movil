@@ -29,6 +29,9 @@ CREATE TABLE appEx_Pregunta (
     Orden INT NOT NULL,
     FechaModificacion DATETIME DEFAULT GETDATE()
 );
+-- 1. Agregamos la columna 'Opciones' para soportar Radio, Checkbox y Selects agregado 6/05/2026
+ALTER TABLE appEx_Pregunta 
+ADD Opciones NVARCHAR(MAX) NULL;
 
 CREATE TABLE appEx_Reglas (
     IdPregunta INT PRIMARY KEY FOREIGN KEY REFERENCES appEx_Pregunta(IdPregunta),

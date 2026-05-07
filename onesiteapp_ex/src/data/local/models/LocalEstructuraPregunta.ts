@@ -23,10 +23,12 @@ export default class LocalEstructuraPregunta extends Model {
   @field('tipo_dato') tipo_dato!: string; // TEXTO, DECIMAL, ENTERO, FECHA, MATRIZ, etc.
   @field('origen_datos_tipo') origen_datos_tipo!: string | null; // MAESTRO, SERVICIO, etc.
   @field('origen_datos_cmd') origen_datos_cmd!: string | null; // Nombre del catálogo
+  @field('opciones') opciones!: string | null; // NUEVO: Para guardar el JSON de Radio/Select
   
   // Reglas de Negocio (Sprint 2 y 3)
   @field('es_editable') es_editable!: number; // 1 = Editable, 0 = Solo lectura
   @field('es_visible_default') es_visible_default!: number;
+  @field('es_obligatorio') es_obligatorio!: number;
   @field('orden') orden!: number;
 
   // Motor de Inteligencia (Sprint 3)

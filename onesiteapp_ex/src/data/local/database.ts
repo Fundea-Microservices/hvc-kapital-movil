@@ -10,9 +10,6 @@ import LocalEncuesta from './models/LocalEncuesta';
 import LocalSeccion from './models/LocalSeccion';
 import LocalEstructuraPregunta from './models/LocalEstructuraPregunta';
 import LocalCaptura from './models/LocalCaptura';
-import AppExEncuesta from './models/AppExEncuesta';
-import AppExPregunta from './models/AppExPregunta';
-import AppExRespuesta from './models/AppExRespuesta';
 import LocalCatalogo from './models/LocalCatalogo';
 import { migrations } from './migrations';
 

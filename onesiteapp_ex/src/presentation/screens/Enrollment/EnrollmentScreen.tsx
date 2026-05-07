@@ -24,7 +24,7 @@ export const EnrollmentScreen = () => {
   const [modalState, setModalState] = useState<EnrollmentModalState>('none');
   const [modalMessage, setModalMessage] = useState('');
   
-  const setEnrollment = useAuthStore((state) => state.setEnrollment);
+  const setEnrolled = useAuthStore((state) => state.setEnrolled);
 
   const enrollMutation = useMutation({
     mutationFn: enrollDeviceApi,
@@ -80,7 +80,7 @@ export const EnrollmentScreen = () => {
       // Pequeño delay para que el Modal desaparezca fluidamente antes de cambiar de pantalla
       setTimeout(() => {
         SecureStore.getItemAsync('deviceToken').then(token => {
-          if (token) setEnrollment(token);
+          if (token) setEnrolled(token);
         });
       }, 300);
     }

@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 1, // Incrementa esto cada vez que cambies la estructura 11
+  version: 2, // Incrementa esto cada vez que cambies la estructura 11
   tables: [
     // Tabla para control de sincronización por tabla (Regla 4.4 y 4.5)
     tableSchema({
@@ -70,14 +70,17 @@ export const schema = appSchema({
     tableSchema({
       name: 'local_estructura_pregunta',
       columns: [
-        { name: 'id_encuesta', type: 'string',isIndexed: true },
+        { name: 'id_encuesta', type: 'string', isIndexed: true },
         { name: 'id_seccion', type: 'string', isIndexed: true },
         { name: 'id_matriz_padre', type: 'string', isOptional: true },
+        { name: 'etiqueta', type: 'string' },
         { name: 'tipo_dato', type: 'string' },
         { name: 'origen_datos_tipo', type: 'string', isOptional: true },
         { name: 'origen_datos_cmd', type: 'string', isOptional: true },
+        { name: 'opciones', type: 'string', isOptional: true }, // Importante
         { name: 'es_editable', type: 'number' },
         { name: 'es_visible_default', type: 'number' },
+        { name: 'es_obligatorio', type: 'number' },
         { name: 'orden', type: 'number' },
         { name: 'sintaxis_calculo', type: 'string', isOptional: true },
         { name: 'regla_visibilidad', type: 'string', isOptional: true },

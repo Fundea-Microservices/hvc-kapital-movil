@@ -8,7 +8,7 @@ export default class LocalSeccion extends Model {
   static table = 'local_seccion';
 
   @field('id_encuesta') id_encuesta!: string;
-  @field('titulo') titulo!: string;
+  @field('nombre') nombre!: string;
   @field('orden') orden!: number;
   @field('es_visible_default') es_visible_default!: number;
 }
