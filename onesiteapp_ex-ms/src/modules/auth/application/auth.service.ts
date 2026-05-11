@@ -28,7 +28,7 @@ export class AuthService {
 
     // 2. VALIDACIÓN LÓGICA (Credenciales)
     const usuario = await this.dataSource.query(
-      `SELECT IdUsuario, PasswordHash, IdRol, Estado FROM Usuarios_AppEx WHERE Username = @0`,
+      `SELECT IdUsuario, PasswordHash, IdRol, NombreCompleto, Estado Estado FROM Usuarios_AppEx WHERE Username = @0`,
       [dto.username]
     );
 
@@ -72,7 +72,9 @@ export class AuthService {
       token_sesion: accessToken,
       refreshToken: refreshToken,
       user_id: usuario[0].IdUsuario,
-      id_rol: usuario[0].IdRol
+      userName: usuario[0].NombreCompleto,
+      id_rol: usuario[0].IdRol,
+      estado: usuario[0].Estado
     };
   }
 

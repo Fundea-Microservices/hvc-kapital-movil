@@ -4,7 +4,6 @@ import { SurveysService } from '../application/surveys.service';
 @Controller('api/v1/surveys')
 export class SurveysController {
   constructor(private readonly surveysService: SurveysService) {}
-
   /**
    * El controlador expone el servicio S1.4 getSurveyStructure.
    * Se requiere el DeviceToken para asegurar la arquitectura Zero Trust.

@@ -49,6 +49,7 @@ export class SurveysService {
       FROM appEx_Pregunta p
       LEFT JOIN appEx_Reglas r ON p.IdPregunta = r.IdPregunta
     `);
+    console.log(`📡 [BACKEND] Preguntas encontradas en BD: ${preguntas.length}`);
 
     preguntas.forEach(row => {
       changes.local_estructura_pregunta.created.push({
@@ -107,7 +108,15 @@ export class SurveysService {
    * Procesa respuestas planas y matrices utilizando el UUID_Instancia.
    */
   async submitSurvey(userId: number, payload: any) {
-    const { idEncuesta, respuestas } = payload;
+    const { 
+      idEncuesta, 
+      respuestas, 
+      fechaInicio, 
+      fechaFin, 
+      latitud, 
+      longitud, 
+      dispositivoId 
+    } = payload;
 
     // El sistema inicia una Transacción SQL para asegurar integridad.
     const queryRunner = this.dataSource.createQueryRunner();
@@ -115,19 +124,39 @@ export class SurveysService {
     await queryRunner.startTransaction();
 
     try {
+
+      //El sistema inserta el Encabezado y recupera el IdCaptura generado
+      const insertHeaderResult = await queryRunner.manager.createQueryBuilder()
+        .insert()
+        .into('appEx_Encabezado_Captura')
+        .values({
+          IdEncuesta: idEncuesta,
+          IdUsuario: userId, // Viene del token de autenticación
+          FechaInicio: fechaInicio || new Date(),
+          FechaFin: fechaFin || new Date(),
+          Latitud: latitud || null,
+          Longitud: longitud || null,
+          DispositivoID: dispositivoId || 'APP_OFFLINE'
+        })
+        .execute();
+
+        // Se extrae el ID generado por la base de datos (IDENTITY)
+      const nuevoIdCaptura = insertHeaderResult.identifiers[0].IdCaptura;
+
       for (const resp of respuestas) {
         // Se inserta cada respuesta en appEx_Respuestas
         // Nota: TypeORM para SQL Server maneja los parámetros de forma limpia enviando los valores en el array
-        await queryRunner.query(
-          `INSERT INTO appEx_Respuestas (IdEncuesta, IdPregunta, UUID_Instancia, Valor)
-           VALUES (@0, @1, @2, @3)`,
-          [
-            idEncuesta,
-            resp.idPregunta,
-            resp.uuidInstancia || null,
-            resp.valor || null
-          ]
-        );
+        await queryRunner.manager.createQueryBuilder()
+          .insert()
+          .into('appEx_Respuestas')
+          .values({
+            IdEncuesta: idEncuesta,
+            IdPregunta: resp.idPregunta,
+            UUID_Instancia: resp.uuidInstancia || null,
+            Valor: resp.valor || null,
+            IdCaptura: nuevoIdCaptura // <-- VÍNCULO CRÍTICO DEL SPRINT 6
+          })
+          .execute();
       }
 
       await queryRunner.commitTransaction();

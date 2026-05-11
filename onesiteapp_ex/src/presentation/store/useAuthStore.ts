@@ -8,10 +8,11 @@ interface AuthState {
   isLoggedIn: boolean;
   token: string | null;
   userId: number | null;
+  userName: string | null;
 
   // Acciones
   setEnrolled: (token: string) => void;
-  setLoggedIn: (token: string, userId: number) => void;
+  setLoggedIn: (token: string, userId: number, userName: string) => void;
   
   // Esta es la función que tu App.tsx necesita para arrancar:
   checkLocalState: (
@@ -19,8 +20,9 @@ interface AuthState {
     dToken: string | null, 
     loggedIn: boolean, 
     uToken: string | null, 
-    uId: number | null
-  ) => void;
+    uId: number | null,
+    uName: string | null
+  ) => void;  
 
   logout: () => void;
   wipeData: () => void;
@@ -34,31 +36,35 @@ export const useAuthStore = create<AuthState>()(
       isLoggedIn: false,
       token: null,
       userId: null,
+      userName: null,
 
       setEnrolled: (token) => set({ 
         isEnrolled: true, 
         deviceToken: token 
       }),
 
-      setLoggedIn: (token, userId) => set({ 
+      setLoggedIn: (token, userId, userName) => set({ 
         isLoggedIn: true, 
         token: token, 
-        userId: userId 
+        userId: userId,
+        userName: userName
       }),
 
       // Sincroniza el estado guardado con el estado de la app al iniciar
-      checkLocalState: (enrolled, dToken, loggedIn, uToken, uId) => set({
+      checkLocalState: (enrolled, dToken, loggedIn, uToken, uId, uName) => set({
         isEnrolled: enrolled,
         deviceToken: dToken,
         isLoggedIn: loggedIn,
         token: uToken,
-        userId: uId
+        userId: uId,
+        userName: uName
       }),
 
       logout: () => set({
         isLoggedIn: false,
         token: null,
-        userId: null
+        userId: null,
+        userName: null
       }),
 
       wipeData: () => set({
@@ -66,7 +72,8 @@ export const useAuthStore = create<AuthState>()(
         deviceToken: null,
         isLoggedIn: false,
         token: null,
-        userId: null
+        userId: null,
+        userName: null
       }),
     }),
     {

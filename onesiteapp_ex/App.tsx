@@ -38,6 +38,7 @@ export default function App() {
         const isAppEnrolled = enrolledStatus === 'true';
         const isUserLoggedIn = !!sessionToken;
         const userId = userIdRaw ? parseInt(userIdRaw, 10) : null;
+        const userName = await SecureStore.getItemAsync('user_name');
 
         // 3. ACTUALIZACIÓN ÚNICA (Evita errores de orden de Hooks)
         checkLocalState(
@@ -45,7 +46,8 @@ export default function App() {
           deviceToken, 
           isUserLoggedIn, 
           sessionToken, 
-          userId
+          userId,
+          userName
         );
 
       } catch (error) {

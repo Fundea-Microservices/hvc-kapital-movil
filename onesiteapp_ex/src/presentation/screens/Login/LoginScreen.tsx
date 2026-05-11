@@ -51,7 +51,7 @@ export const LoginScreen = () => {
         // 4. ÉXITO: Cambiamos estado global y cerramos modal
         // Importante: setLoggedIn dispara el re-renderizado de App.tsx para ir al Dashboard
         setModalState('none');
-        setLoggedIn(data.token_sesion, data.user_id);
+        setLoggedIn(data.token_sesion, data.user_id, perfilServidor.NombreCompleto);
         
         // 5. SINCRONIZACIÓN: En segundo plano
         runFullSync().catch((err) => console.error("Error en sincro inicial:", err));
