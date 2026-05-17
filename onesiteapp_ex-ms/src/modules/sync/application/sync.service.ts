@@ -159,6 +159,7 @@ export class SyncService {
       app_ex_encuesta: { created: [], updated: [], deleted: [] },
       app_ex_pregunta: { created: [], updated: [], deleted: [] },
     };
+    
     try {
       // --- LÓGICA PARA ENCUESTAS ---
       // Se buscan encuestas creadas o modificadas después de la última sincronización

@@ -8,11 +8,11 @@ interface AuthState {
   isLoggedIn: boolean;
   token: string | null;
   userId: number | null;
-  userName: string | null;
+  nombreCompleto: string | null;
 
   // Acciones
   setEnrolled: (token: string) => void;
-  setLoggedIn: (token: string, userId: number, userName: string) => void;
+  setLoggedIn: (token: string, userId: number, nombreCompleto: string) => void;
   
   // Esta es la función que tu App.tsx necesita para arrancar:
   checkLocalState: (
@@ -21,7 +21,7 @@ interface AuthState {
     loggedIn: boolean, 
     uToken: string | null, 
     uId: number | null,
-    uName: string | null
+    unombreCompleto: string | null
   ) => void;  
 
   logout: () => void;
@@ -36,35 +36,35 @@ export const useAuthStore = create<AuthState>()(
       isLoggedIn: false,
       token: null,
       userId: null,
-      userName: null,
+      nombreCompleto: null,
 
       setEnrolled: (token) => set({ 
         isEnrolled: true, 
         deviceToken: token 
       }),
 
-      setLoggedIn: (token, userId, userName) => set({ 
+      setLoggedIn: (token, userId, nombreCompleto) => set({ 
         isLoggedIn: true, 
         token: token, 
         userId: userId,
-        userName: userName
+        nombreCompleto: nombreCompleto || 'Usuario sin nombre',
       }),
 
       // Sincroniza el estado guardado con el estado de la app al iniciar
-      checkLocalState: (enrolled, dToken, loggedIn, uToken, uId, uName) => set({
+      checkLocalState: (enrolled, dToken, loggedIn, uToken, uId, unombreCompleto) => set({
         isEnrolled: enrolled,
         deviceToken: dToken,
         isLoggedIn: loggedIn,
         token: uToken,
         userId: uId,
-        userName: uName
+        nombreCompleto: unombreCompleto
       }),
 
       logout: () => set({
         isLoggedIn: false,
         token: null,
         userId: null,
-        userName: null
+        nombreCompleto: null
       }),
 
       wipeData: () => set({
@@ -73,7 +73,7 @@ export const useAuthStore = create<AuthState>()(
         isLoggedIn: false,
         token: null,
         userId: null,
-        userName: null
+        nombreCompleto: null
       }),
     }),
     {

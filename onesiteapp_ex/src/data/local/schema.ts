@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 2, // Incrementa esto cada vez que cambies la estructura 11
+  version: 3, // Incrementa esto cada vez que cambies la estructura 11
   tables: [
     // Tabla para control de sincronización por tabla (Regla 4.4 y 4.5)
     tableSchema({
@@ -141,6 +141,17 @@ export const schema = appSchema({
       ],
     }),
 
+    tableSchema({
+      name: 'local_catalogo_opciones',
+      columns: [
+        { name: 'id_remoto', type: 'string' },
+        { name: 'nombre_catalogo', type: 'string' },
+        { name: 'codigo_catalogo', type: 'string' },
+        { name: 'codigo_opcion', type: 'string' },
+        { name: 'valor_opcion', type: 'string' },
+        { name: 'id_padre_opcion', type: 'string', isOptional: true },
+      ],
+    }),
 
   ],
 });

@@ -1,23 +1,22 @@
 import { synchronize } from '@nozbe/watermelondb/sync';
 import { database } from '../database';
 import { apiClient } from '../../../core/network/apiClient';
-import { Q } from '@nozbe/watermelondb';
+import { Database, Q } from '@nozbe/watermelondb';
+import { useAuthStore } from '../../../presentation/store/useAuthStore';
+import axios from 'axios';
 
+// ============================================================================
+// 1. FUNCIÓN PRINCIPAL DE SINCRONIZACIÓN DE ENCUESTAS (Deltas)
+// ============================================================================
 export const runFullSync = async () => {
   console.log('🔄 [SYNC] Iniciando sincronización...');
-
   try {
     await synchronize({
       database,
-
-      // =========================================================
-      // PULL: DESCARGA DE DATOS DESDE EL SERVIDOR (SQL -> SQLite)
-      // =========================================================
       pullChanges: async ({ lastPulledAt }) => {
         console.log('📥 [SYNC PULL] Obteniendo cambios del servidor...');
         const syncDate = lastPulledAt ? new Date(lastPulledAt).toISOString() : null;
 
-        // 1. Peticiones al backend
         const [coreRes, structureRes, catalogsRes] = await Promise.all([
           apiClient.post('/sync/deltas', { lastSyncDates: { cat_menu_appex: syncDate, cat_parametros_appex: syncDate } }),
           apiClient.post('/surveys/structure', { lastSyncDate: syncDate }),
@@ -28,7 +27,6 @@ export const runFullSync = async () => {
         const coreChanges = coreRes.data?.changes || {};
         const catChanges = catalogsRes.data?.changes || {};
 
-        // Función utilitaria para encontrar la llave correcta del servidor
         const getTableData = (obj: any, posiblesNombres: string[]) => {
           for (const nombre of posiblesNombres) {
             if (obj[nombre]) return obj[nombre];
@@ -36,12 +34,10 @@ export const runFullSync = async () => {
           return { created: [], updated: [], deleted: [] };
         };
 
-        // Extraemos los datos exactos que manda el código de NestJS
         const encuestasServidor = structChanges.local_encuesta?.created || [];
         const seccionesServidor = structChanges.local_seccion?.created || [];
         const preguntasServidor = structChanges.local_estructura_pregunta?.created || [];
 
-        // 2. Mapeo Defensivo y Reconstrucción
         const mergedChanges = {
           ...coreChanges,
           ...catChanges,
@@ -70,20 +66,17 @@ export const runFullSync = async () => {
 
           local_estructura_pregunta: {
             created: preguntasServidor.map((row: any) => {
-              // LA MAGIA: Si la pregunta no trae id_encuesta, lo buscamos en su sección
               const seccionPadre = seccionesServidor.find((s: any) => s.id?.toString() === row.id_seccion?.toString());
               const idEncuestaReal = row.id_encuesta?.toString() || seccionPadre?.id_encuesta?.toString();
 
               return {
                 id: row.id?.toString(),
                 id_seccion: row.id_seccion?.toString(),
-                id_encuesta: idEncuestaReal, // Resuelve el problema de las pantallas en blanco
-                // --- COLUMNAS DE INTELIGENCIA 
+                id_encuesta: idEncuestaReal, 
                 id_matriz_padre: row.id_matriz_padre?.toString() || null,
                 sintaxis_calculo: row.sintaxis_calculo || null,
                 regla_visibilidad: row.regla_visibilidad || null,
                 regla_validacion: row.regla_validacion || null,
-                //-----------------------
                 etiqueta: row.etiqueta || 'Sin etiqueta',
                 tipo_dato: row.tipo_dato || 'TEXTO',
                 opciones: row.opciones || null,
@@ -115,34 +108,20 @@ export const runFullSync = async () => {
         };
       },
 
-      // =========================================================
-      // PUSH: SUBIDA DE DATOS DESDE LA APP AL SERVIDOR (SQLite -> SQL)
-      // =========================================================
       pushChanges: async ({ changes }) => {
-        console.log('📤 [SYNC PUSH] Detectando cambios locales para enviar al servidor...');
-
+        console.log('📤 [SYNC PUSH] Detectando cambios locales...');
         const capturasNuevas = (changes as any).local_captura?.created || [];
+        if (capturasNuevas.length === 0) return;
 
-        if (capturasNuevas.length === 0) {
-          console.log('✅ [SYNC PUSH] No hay capturas nuevas para enviar.');
-          return;
-        }
-
-        console.log(`📦 [SYNC PUSH] Se encontraron ${capturasNuevas.length} respuestas. Preparando paquetes...`);
-
-        // 1. Agrupamos las respuestas por UUID
         const encuestasAgrupadas: Record<string, any[]> = {};
-
         capturasNuevas.forEach((cap: any) => {
           const uuid = cap.uuid_instancia;
-          if (!encuestasAgrupadas[uuid]) {
-            encuestasAgrupadas[uuid] = [];
-          }
+          if (!encuestasAgrupadas[uuid]) encuestasAgrupadas[uuid] = [];
           encuestasAgrupadas[uuid].push(cap);
         });
 
-        // 2. Enviamos cada encuesta agrupada al backend
         for (const [uuid, respuestas] of Object.entries(encuestasAgrupadas)) {
+          const userId = useAuthStore.getState().userId;
           const idEncuesta = respuestas[0].id_encuesta;
 
           const payload = {
@@ -150,24 +129,17 @@ export const runFullSync = async () => {
             respuestas: respuestas.map(r => ({
               idPregunta: Number(r.id_pregunta),
               uuidInstancia: r.uuid_instancia,
+              IdUsuario: userId,
               valor: r.valor
             }))
           };
 
-          console.log(`🚀 [SYNC PUSH] Enviando Instancia UUID: ${uuid}...`);
-
           try {
-            // Asegúrate de que la ruta coincida con tu NestJS
-            const response = await apiClient.post('/surveys/submit', payload);
-            console.log(`✅ [SYNC PUSH] Servidor respondió OK para UUID: ${uuid}`, response.data);
-
-            // --- NUEVO: MARCAR COMO ENVIADO EN SQLITE ---
+            await apiClient.post('/surveys/submit', payload);
             await database.write(async () => {
               const capturaCollection = database.collections.get('local_captura');
-              // Buscamos todos los registros (respuestas) que pertenecen a este UUID
               const registrosActualizar = await capturaCollection.query(Q.where('uuid_instancia', uuid)).fetch();
 
-              // Preparamos la actualización masiva a estado_sincro = 1 (Enviado)
               const updates = registrosActualizar.map((registro: any) =>
                 registro.prepareUpdate((rec: any) => {
                   rec.estado_sincro = 1;
@@ -175,23 +147,72 @@ export const runFullSync = async () => {
               );
               await database.batch(...updates);
             });
-            console.log(`✅ [SYNC PUSH] UUID ${uuid} marcado como ENVIADO localmente.`);
-            // ---------------------------------------------
-
-            // Opcional: Marcar como enviado localmente en un futuro Sprint
-          } catch (err: any) {
-            console.error(`❌ [SYNC PUSH ERROR] Falló el envío del UUID: ${uuid}. Razón:`, err.response?.data || err.message);
+          } catch (err) {
             throw new Error(`Error sincronizando captura ${uuid}`);
           }
         }
-
-        console.log('🎉 [SYNC PUSH] Todas las capturas enviadas exitosamente.');
       },
     });
+    
+    console.log("✅ Sincronización base exitosa");
 
-    console.log("✅ Sincronización exitosa");
+    // ========================================================================
+    // INTERCEPCIÓN DE INGENIERÍA: DESCARGA AUTOMÁTICA DE CATÁLOGOS
+    // ========================================================================
+    const token = useAuthStore.getState().token;
+    if (token) {
+      console.log('📥 [SYNC] Iniciando descarga automática de catálogos maestros...');
+      // El sistema ejecuta la descarga pasándole la instancia global de la base de datos
+      await sincronizarCatalogos(database, token);
+    }
+
   } catch (error) {
     console.error("❌ Error crítico durante la sincronización:", error);
     throw error;
+  }
+};
+
+// ============================================================================
+// 2. FUNCIÓN DE DESCARGA MASIVA DE CATÁLOGOS (API Estricta con Paginación)
+// ============================================================================
+export const sincronizarCatalogos = async (databaseInstance: Database, token: string) => {
+  try {
+    // CORRECCIÓN DE PARÁMETROS: El sistema fuerza la lectura desde la página 1 con límite extendido
+    const response = await axios.get('http://172.25.5.11:3000/api/onesiteex/catalogo-opcion/maestros?page=1&limit=500', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    const catalogosRemotos = response.data.data;
+    
+    if (!catalogosRemotos || catalogosRemotos.length === 0) {
+      console.warn("⚠️ El servidor respondió con un conjunto de datos vacío para los catálogos.");
+      return;
+    }
+
+    const catalogoCollection = databaseInstance.collections.get('local_catalogo_opciones');
+
+    await databaseInstance.write(async () => {
+      // El sistema limpia los registros anteriores antes de realizar la carga masiva
+      const existentes = await catalogoCollection.query().fetch();
+      const registrosBorrados = existentes.map(r => r.prepareDestroyPermanently());
+      
+      const nuevosRegistros = catalogosRemotos.map((cat: any) => 
+        catalogoCollection.prepareCreate((record: any) => {
+          record.id_remoto = cat.id;
+          record.nombre_catalogo = cat.nombre_catalogo;
+          record.codigo_catalogo = cat.codigo_catalogo;
+          record.codigo_opcion = cat.codigo_opcion;
+          record.valor_opcion = cat.valor_opcion;
+          record.id_padre_opcion = cat.id_padre_opcion;
+        })
+      );
+
+      // Transacción en bloque de alta velocidad
+      await databaseInstance.batch(registrosBorrados.concat(nuevosRegistros))
+    });
+
+    console.log(`✅ [SQLITE] ${catalogosRemotos.length} Catálogos maestros guardados para uso sin conexión.`);
+  } catch (error) {
+    console.error('❌ Error en el servicio de sincronización de catálogos:', error);
   }
 };

@@ -12,7 +12,8 @@ import LocalEstructuraPregunta from '../../../data/local/models/LocalEstructuraP
 import LocalSeccion from '../../../data/local/models/LocalSeccion';
 import LocalCaptura from '../../../data/local/models/LocalCaptura';
 import { SurveyField } from '../../components/Surveys/SurveyField';
-import LocalCatalogo from '../../../data/local/models/LocalCatalogo'; // Agrega esta importación
+import LocalCatalogo from '../../../data/local/models/LocalCatalogo';
+import { evaluate } from 'mathjs';
 
 interface Props {
   encuesta: LocalEncuesta;
@@ -67,28 +68,66 @@ const DynamicSurvey = ({ encuesta, preguntas, secciones, catalogos, onVolverInic
     }
   };
 
-  // --- EVALUADOR DE CÁLCULOS MATEMÁTICOS ---
-  const getCalculatedValue = (p: LocalEstructuraPregunta) => {
-    if (!p.sintaxis_calculo) return respuestas[p.id] || ''; 
-    try {
-      const regla = JSON.parse(p.sintaxis_calculo);
-      const val1 = Number(respuestas[regla.variables[0]]) || 0;
-      const val2 = Number(respuestas[regla.variables[1]]) || 0;
-      
-      let resultado = 0;
-      if (regla.operacion === 'SUMA') resultado = val1 + val2;
-      if (regla.operacion === 'RESTA') resultado = val1 - val2;
-      if (regla.operacion === 'MULTIPLICACION') resultado = val1 * val2;
+  // El sistema actualiza la respuesta y evalúa cálculos matemáticos en cascada
+  const handleRespuestaChange = (idPregunta: string, valor: string) => {
+    // 1. Guardamos el valor que el usuario acaba de escribir
+    const nuevasRespuestas = { ...respuestas, [idPregunta]: valor };
+    // Lo envolvemos en un pequeño bucle por si hay cálculos que dependen de otros cálculos
+    let huboCambios = true;
+    let iteraciones = 0;
 
-      const resultadoStr = resultado.toString();
+    while (huboCambios && iteraciones < 5) { // Máximo 3 niveles de cascada para evitar loops
+      huboCambios = false;
+      iteraciones++;
 
-      if (respuestas[p.id] !== resultadoStr) {
-        setTimeout(() => setRespuestas(prev => ({ ...prev, [p.id]: resultadoStr })), 0);
-      }
-      return resultadoStr;
-    } catch (e) {
-      return '';
+
+      // 2. Buscamos todas las preguntas que son de tipo 'CALCULO' y tienen fórmula
+      preguntas
+        .filter(p => p.tipo_dato === 'CALCULO' && p.sintaxis_calculo)
+        .forEach(p => {
+          try {
+            // Se parsea la regla matemática desde la base de datos local
+            const reglas = JSON.parse(p.sintaxis_calculo ?? '{}');
+            const scope: Record<string, number> = {};
+            let puedeCalcular = true;
+
+
+            // Se extraen los valores numéricos de las preguntas de las que depende esta fórmula
+            for (const [nombreVariable, idRef] of Object.entries(reglas.variables)) {
+              const val = nuevasRespuestas[idRef as string];
+              // Se busca el valor en el estado actual de respuestas
+              const num = parseFloat(nuevasRespuestas[idRef as string]);
+
+              if (!val || isNaN(num)) {
+                puedeCalcular = false;
+                break;// Si falta un número, se detiene el cálculo de esta fórmu
+              }
+              scope[nombreVariable] = num;
+            }
+
+            // Si todos los datos existen
+            if (puedeCalcular) {
+              // Mathjs evalúa la fórmula inyectando las variables
+              const resultado = evaluate(reglas.formula, scope);
+              // Se redondea a 2 decimales para evitar números infinitos y se guarda
+              const resultadoStr = parseFloat(resultado.toFixed(2)).toString();
+              // Solo actualizamos si el resultado es diferente al que ya teníamos
+              if (nuevasRespuestas[p.id] !== resultadoStr) {
+                nuevasRespuestas[p.id] = resultadoStr;
+                huboCambios = true;
+              }
+            } else {
+              // Si faltan datos para resolver la fórmula, el campo se limpia
+              nuevasRespuestas[p.id] = '';
+            }
+          } catch (error) {
+            console.error(`Error en el motor de cálculo (Pregunta ${p.id}):`, error);
+          }
+        });
     }
+
+    // 3. Se actualiza el estado global de la pantalla con las respuestas y cálculos nuevos
+    setRespuestas(nuevasRespuestas);
   };
 
   // --- GUARDADO ---
@@ -99,7 +138,7 @@ const DynamicSurvey = ({ encuesta, preguntas, secciones, catalogos, onVolverInic
 
       await database.write(async () => {
         const capturaCollection = database.collections.get<LocalCaptura>('local_captura');
-        
+
         const batchCreate = Object.entries(respuestas).map(([key, valor]) => {
           const partes = key.split('_');
           const idPregunta = partes[0];
@@ -126,21 +165,19 @@ const DynamicSurvey = ({ encuesta, preguntas, secciones, catalogos, onVolverInic
     }
   };
 
-  //  Función para interceptar catálogos
-  const obtenerOpciones = (opcionesString: string | null) => {
-    if (!opcionesString) return undefined;
-    
-    // Si la cadena empieza con 'CAT_', buscamos en WatermelonDB
+  const obtenerOpciones = (opcionesString: string | null): string => {
+    if (!opcionesString) return '';
+
     if (opcionesString.startsWith('CAT_')) {
       const items = catalogos
         .filter(c => c.nombre_catalogo === opcionesString)
         .map(c => c.valor_opcion);
-      return items.length > 0 ? JSON.stringify(items) : undefined;
+      return items.length > 0 ? JSON.stringify(items) : '';
     }
-    
-    // Si no es un catálogo, asumimos que ya es un JSON quemado (Legacy)
-    return opcionesString; 
+
+    return opcionesString;
   };
+
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
@@ -157,7 +194,7 @@ const DynamicSurvey = ({ encuesta, preguntas, secciones, catalogos, onVolverInic
 
       <ScrollView className="flex-1 p-4" keyboardShouldPersistTaps="handled">
         {secciones.map((seccion) => {
-          const preguntasRaiz = preguntas.filter(p => 
+          const preguntasRaiz = preguntas.filter(p =>
             p.id_seccion === seccion.id && (!p.id_matriz_padre || p.id_matriz_padre === 'null')
           );
 
@@ -165,7 +202,7 @@ const DynamicSurvey = ({ encuesta, preguntas, secciones, catalogos, onVolverInic
 
           return (
             <View key={seccion.id} className="mb-8">
-              <Text className="text-[#1E3A8A] font-bold text-xs uppercase mb-4 ml-2 tracking-widest">{seccion.nombre}</Text>
+              <Text className="text-[#1E3A8A] font-bold text-xs mb-4 ml-2 tracking-widest">{seccion.nombre}</Text>
 
               {preguntasRaiz.map((p) => {
                 if (!isQuestionVisible(p)) return null;
@@ -178,12 +215,12 @@ const DynamicSurvey = ({ encuesta, preguntas, secciones, catalogos, onVolverInic
                     <View key={p.id} className="mb-6 bg-blue-50/60 p-4 rounded-[32px] border border-blue-100">
                       <View className="flex-row justify-between items-center mb-4 px-2">
                         <Text className="font-bold text-[#1E3A8A] flex-1 mr-2">{p.etiqueta}</Text>
-                        <TouchableOpacity 
+                        <TouchableOpacity
                           onPress={() => añadirFilaMatriz(p.id)}
                           className="bg-[#1E3A8A] px-4 py-2 rounded-full flex-row items-center shadow-sm"
                         >
                           <Feather name="plus" size={16} color="white" />
-                          <Text className="text-white font-bold ml-1 text-xs">Añadir Fila</Text>
+                          <Text className="text-white font-bold ml-1 text-xs">Añadir</Text>
                         </TouchableOpacity>
                       </View>
 
@@ -208,7 +245,7 @@ const DynamicSurvey = ({ encuesta, preguntas, secciones, catalogos, onVolverInic
                                 valor={respuestas[`${hija.id}_${uuidFila}`] || ''}
                                 opciones={obtenerOpciones(hija.opciones)}
                                 onChangeText={(txt) => setRespuestas(prev => ({ ...prev, [`${hija.id}_${uuidFila}`]: txt }))}
-                                onBlur={() => {}}
+                                onBlur={() => { }}
                               />
                             </View>
                           ))}
@@ -224,7 +261,8 @@ const DynamicSurvey = ({ encuesta, preguntas, secciones, catalogos, onVolverInic
                   );
                 }
 
-                const valorActual = p.es_editable === 0 ? getCalculatedValue(p) : (respuestas[p.id] || '');
+                //const valorActual = p.es_editable === 0 ? handleRespuestaChange(p) : (respuestas[p.id] || '');
+                const valorActual = respuestas[p.id] || '';
 
                 return (
                   <View key={p.id} className="mb-4 bg-white p-5 rounded-[24px] shadow-sm border border-gray-100">
@@ -236,8 +274,8 @@ const DynamicSurvey = ({ encuesta, preguntas, secciones, catalogos, onVolverInic
                       valor={valorActual}
                       opciones={obtenerOpciones(p.opciones)}
                       onChangeText={(txt) => setRespuestas(prev => ({ ...prev, [p.id]: txt }))}
-                      onBlur={() => {}}
-                      mensajeInfo={p.es_editable === 0 ? "Calculado automáticamente" : undefined} 
+                      onBlur={() => { }}
+                      mensajeInfo={p.tipo_dato === 'CALCULO' ? "Calculado automáticamente" : undefined}
                     />
                   </View>
                 );

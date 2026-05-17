@@ -12,6 +12,7 @@ import LocalEstructuraPregunta from './models/LocalEstructuraPregunta';
 import LocalCaptura from './models/LocalCaptura';
 import LocalCatalogo from './models/LocalCatalogo';
 import { migrations } from './migrations';
+import { CatalogoOpcion } from './models/CatalogoOpcion';
 
 // 1. Configurar el adaptador para SQLite
 const adapter = new SQLiteAdapter({
@@ -37,5 +38,6 @@ export const database = new Database({
     LocalEstructuraPregunta,
     LocalCaptura,
     LocalCatalogo,
+    CatalogoOpcion,
   ],
 });

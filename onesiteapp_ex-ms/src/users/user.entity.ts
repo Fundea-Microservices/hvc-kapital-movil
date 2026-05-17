@@ -8,6 +8,9 @@ export class User {
   @Column({ type: 'varchar', length: 100, unique: true })
   username: string;
 
+  @Column({ type: 'varchar', length: 100  })
+  nombrecompleto: string;
+
   @Column({ type: 'varchar', length: 255 })
   passwordHash: string; // Nunca guardamos contraseñas en texto plano
 

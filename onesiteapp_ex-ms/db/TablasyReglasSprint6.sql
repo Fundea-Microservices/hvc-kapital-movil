@@ -135,3 +135,22 @@ BEGIN
 END;
 GO
 PRINT 'Trigger compilado y creado exitosamente.';
+
+-- El sistema crea la tabla de Accesos Parametrizables
+CREATE TABLE appEx_Acceso (
+    IdAcceso INT IDENTITY(1,1) PRIMARY KEY,
+    IdMenu INT NULL,          -- Si es NULL, aplica a toda una sección o encuesta
+    IdRol INT NOT NULL,       -- Relacionado a Roles_Permisos_AppEx
+    IdMainMenu INT NULL,      -- Para crear submenús jerárquicos
+    IdEncuesta INT NULL,      -- NUEVO: Si tiene un ID, este rol puede ver esta encuesta
+    OrdenMenu INT DEFAULT 1,
+    MostrarApp BIT DEFAULT 1, -- 1 = Se ve en el celular
+    MostrarWeb BIT DEFAULT 0, -- 1 = Se ve en el panel de admin
+    Activo BIT DEFAULT 1,
+    
+    -- Foreign Keys
+    CONSTRAINT FK_Acceso_Rol FOREIGN KEY (IdRol) REFERENCES Roles_Permisos_AppEx(IdRol),
+    CONSTRAINT FK_Acceso_Encuesta FOREIGN KEY (IdEncuesta) REFERENCES appEx_Encuesta(IdEncuesta)
+);
+
+PRINT 'Tabla appEx_Acceso creada con éxito.';

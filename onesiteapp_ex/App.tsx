@@ -9,17 +9,21 @@ import "./global.css";
 import { EnrollmentScreen } from './src/presentation/screens/Enrollment/EnrollmentScreen';
 import { LoginScreen } from './src/presentation/screens/Login/LoginScreen';
 import { useAuthStore } from './src/presentation/store/useAuthStore'; 
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack'
 import { DashboardScreen } from './src/presentation/screens/Dashboard/DashboardScreen';
 import { DynamicSurveyScreen } from './src/presentation/screens/DynamicSurvey/DynamicSurveyScreen'; 
 
 const queryClient = new QueryClient();
+const Stack = createNativeStackNavigator();
+
 
 export default function App() {
   // 1. Usamos checkLocalState para actualizar TODO de un solo golpe
   const { isLoggedIn, isEnrolled, checkLocalState } = useAuthStore();
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   
-  const [viewState, setViewState] = useState<{ name: 'DASHBOARD' | 'SURVEY', params?: string }>({ name: 'DASHBOARD' });
+  //const [viewState, setViewState] = useState<{ name: 'DASHBOARD' | 'SURVEY', params?: string }>({ name: 'DASHBOARD' });
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -60,7 +64,7 @@ export default function App() {
     initializeApp();
   }, [checkLocalState]);
 
-  const renderRouter = () => {
+  /**const renderRouter = () => {
     if (!isEnrolled) return <EnrollmentScreen />;
     if (!isLoggedIn) return <LoginScreen />;
 
@@ -72,13 +76,12 @@ export default function App() {
         />
       );
     }
-
     return (
       <DashboardScreen 
         onAbrirEncuesta={(id: string) => setViewState({ name: 'SURVEY', params: id })} 
       />
     );
-  };
+  };**/
 
   if (isLoading) {
     return (
@@ -87,11 +90,27 @@ export default function App() {
         <Text className="mt-4 text-gray-500 font-bold">Verificando seguridad...</Text>
       </View>
     );
-  }
-
+  };
+  
   return (
     <QueryClientProvider client={queryClient}>
-      {renderRouter()}
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {!isEnrolled ? (
+            // FLUJO 1: Registro de dispositivo
+            <Stack.Screen name="Enrollment" component={EnrollmentScreen} />
+          ) : !isLoggedIn ? (
+            // FLUJO 2: Autenticación
+            <Stack.Screen name="Login" component={LoginScreen} />
+          ) : (
+            // FLUJO 3: App Principal (Dashboard y Encuestas)
+            <>
+              <Stack.Screen name="Dashboard" component={DashboardScreen} />
+              <Stack.Screen name="DynamicSurvey" component={DynamicSurveyScreen} />
+            </>
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
     </QueryClientProvider>
   );
 }

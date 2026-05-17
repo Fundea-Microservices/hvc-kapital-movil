@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Keyboard, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Keyboard, Alert, Image } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { useMutation } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
@@ -7,7 +7,8 @@ import { Feather } from '@expo/vector-icons';
 import { loginApi, getPermisosApi } from '../../../data/remote/auth.api';
 import { useAuthStore } from '../../store/useAuthStore';
 import { authLocalService } from '../../../data/local/services/authLocalService';
-import { runFullSync } from '../../../data/local/services/syncManager';
+import { runFullSync, sincronizarCatalogos } from '../../../data/local/services/syncManager';
+import { database } from '../../../data/local/database';
 
 type LoginModalState = 'none' | 'syncing' | 'error';
 
@@ -16,7 +17,7 @@ export const LoginScreen = () => {
   const [password, setPassword] = useState('');
   const [modalState, setModalState] = useState<LoginModalState>('none');
   const [errorMessage, setErrorMessage] = useState('Credenciales incorrectas');
-  
+
   // Extraemos las funciones del store de forma segura
   const setLoggedIn = useAuthStore((state) => state.setLoggedIn);
 
@@ -32,30 +33,40 @@ export const LoginScreen = () => {
         // 1. Guardar tokens de seguridad (Venían del loginApi)
         await SecureStore.setItemAsync('token_sesion', data.token_sesion);
         await SecureStore.setItemAsync('refresh_token', data.refreshToken);
-        await SecureStore.setItemAsync('user_id', data.user_id.toString());
+        await SecureStore.setItemAsync('user_id', String(data.user_id)) //debeir como String
 
         // 2. Obtener perfil completo del servidor (NestJS)
         const perfilServidor = await getPermisosApi(data.token_sesion);
-        
+        const nombreParaMostrar = perfilServidor.NombreCompleto || perfilServidor.nombreCompleto || '';
+        await SecureStore.setItemAsync('nombre_completo', String(nombreParaMostrar));
+
         console.log("📥 Perfil recibido para guardar:", perfilServidor);
 
         // 3. GUARDADO OFFLINE
         // Usamos los campos EXACTOS que vimos en tus logs: IdUsuario, NombreCompleto, etc.
         await authLocalService.savePerfilOffline({
           IdUsuario: data.user_id, // Usamos el ID que vino del login
-          NombreCompleto: perfilServidor.NombreCompleto || username,
-          RolNombre: perfilServidor.RolNombre || 'Usuario',
-          Permisos: perfilServidor.Permisos || {}
+          NombreCompleto: nombreParaMostrar || username,
+          RolNombre: perfilServidor.Rol || 'Usuario',
+          // FIX: WatermelonDB/LocalService puede ahogarse si le pasamos un JSON anidado. Lo serializamos a string para evitar errores de tipo.
+          Permisos: typeof perfilServidor.permisosGranulares === 'string'
+            ? perfilServidor.permisosGranulares
+            : JSON.stringify(perfilServidor.permisosGranulares || {})
         });
 
         // 4. ÉXITO: Cambiamos estado global y cerramos modal
         // Importante: setLoggedIn dispara el re-renderizado de App.tsx para ir al Dashboard
         setModalState('none');
-        setLoggedIn(data.token_sesion, data.user_id, perfilServidor.NombreCompleto);
-        
-        // 5. SINCRONIZACIÓN: En segundo plano
-        runFullSync().catch((err) => console.error("Error en sincro inicial:", err));
+        setLoggedIn(data.token_sesion, data.user_id, nombreParaMostrar);
 
+        // 5. SINCRONIZACIÓN: En segundo plano
+        //runFullSync().catch((err) => console.error("Error en sincro inicial:", err));
+        runFullSync()
+          .then(() => {
+            // Si la sincronización principal funcionó, bajamos los catálogos pesados
+            return sincronizarCatalogos(database, data.token_sesion);
+          })
+          .catch((err) => console.error("Error en sincro general:", err));
       } catch (error) {
         console.error("❌ Error en proceso post-login:", error);
         setErrorMessage('Error al preparar la base de datos local');
@@ -81,22 +92,30 @@ export const LoginScreen = () => {
   // --- ELIMINADA LA FUNCIÓN handleLogin DUPLICADA QUE CAUSABA ERROR ---
 
   return (
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       className="flex-1 bg-[#F3F4F6]"
     >
       <ScrollView contentContainerStyle={{ flexGrow: 1 }} bounces={false} keyboardShouldPersistTaps="handled">
         <View className="flex-1 items-center justify-center px-6 py-10">
-          
-          {/* Header */}
           <View className="items-center mb-10">
-            <View className="bg-[#1E3A8A] w-16 h-16 rounded-full items-center justify-center mb-2 shadow-md">
-              <Feather name="user" size={32} color="white" />
+            {/* Imagen del hombre (hombrefundea.jpeg) en un círculo */}
+            <View className="w-24 h-24 rounded-full overflow-hidden mb-4 shadow-md border-2 border-[#1E3A8A]">
+              <Image
+                source={require('../../../../assets/hombrefundea.jpeg')}
+                style={{ width: '100%', height: '100%' }}
+                resizeMode="cover"
+              />
             </View>
-            <Text className="text-3xl font-bold">
-              <Text className="text-[#F59E0B]">One</Text>
-              <Text className="text-[#1E3A8A]">Site</Text>
-            </Text>
+
+            {/* Letras OneSite (letras_onesite.jpeg) */}
+            <View className="h-10 w-40 mb-2">
+              <Image
+                source={require('../../../../assets/letras onesite.jpeg')}
+                style={{ width: '100%', height: '100%' }}
+                resizeMode="contain"
+              />
+            </View>
             <Text className="text-gray-400 tracking-[3px] text-[10px] mt-2 font-bold uppercase">Microfinanzas</Text>
             <Text className="text-[#1E3A8A] text-2xl font-bold mt-8">Iniciar sesión</Text>
           </View>
@@ -125,7 +144,7 @@ export const LoginScreen = () => {
               />
             </View>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               className={`rounded-2xl py-4 items-center shadow-lg ${username && password ? 'bg-[#1E3A8A]' : 'bg-gray-400'}`}
               onPress={onPressLogin}
               disabled={!username || !password || loginMutation.isPending}
@@ -134,6 +153,7 @@ export const LoginScreen = () => {
                 {loginMutation.isPending ? 'Validando...' : 'Ingresar'}
               </Text>
             </TouchableOpacity>
+
           </View>
         </View>
       </ScrollView>
@@ -152,7 +172,7 @@ export const LoginScreen = () => {
                 <Feather name="x" size={48} color="white" />
               </View>
               <Text className="text-xl font-bold text-gray-800 mb-10 text-center">{errorMessage}</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 className="bg-[#1E3A8A] w-full rounded-2xl py-4 items-center"
                 onPress={() => setModalState('none')}
               >
@@ -162,6 +182,6 @@ export const LoginScreen = () => {
           )}
         </View>
       </Modal>
-    </KeyboardAvoidingView>
+    </KeyboardAvoidingView >
   );
 };

@@ -80,3 +80,7 @@ INSERT INTO Cat_Menu_AppEx (Titulo, Icono, Orden, RutaPantalla, IdPadre) VALUES 
 INSERT INTO Cat_Menu_AppEx (Titulo, Icono, Orden, RutaPantalla, IdPadre) VALUES ('Perfil', 'clipboard', 3, NULL, NULL);
 -- Hijo de Encuestas (IdPadre = 2)
 INSERT INTO Cat_Menu_AppEx (Titulo, Icono, Orden, RutaPantalla, IdPadre) VALUES ('SGRAS Línea base', 'plus', 1, '/encuestas/nueva', 2);
+
+-- Insertamos el menú donde crearemos los formularios
+INSERT INTO Cat_Menu_AppEx (Titulo, Icono, Orden, RutaPantalla, IdPadre) 
+VALUES ('Gestión de Campo', 'clipboard', 5, '/encuestas_dinamicas', NULL);

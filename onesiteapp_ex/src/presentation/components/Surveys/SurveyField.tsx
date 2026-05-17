@@ -86,7 +86,7 @@ export const SurveyField = ({
             onChangeText={onChangeText}
             onBlur={onBlur}
             keyboardType="numeric"
-            placeholder={esEditable ? "Ej: 15000" : ""}
+            placeholder={esEditable ? "Ej: 5000.50" : ""}
           />
         );
 
@@ -156,22 +156,37 @@ export const SurveyField = ({
         );
 
       case 'CHECKBOX':
-        return (
-          <TouchableOpacity 
-            disabled={!esEditable}
-            onPress={() => { onChangeText(valor === 'SI' ? 'NO' : 'SI'); onBlur(); }}
-            className={`flex-row items-center p-4 border-2 rounded-xl bg-white ${containerClasses}`}
-          >
-            <Feather 
-              name={valor === 'SI' ? 'check-square' : 'square'} 
-              size={24} 
-              color={valor === 'SI' ? "#1E3A8A" : "#9CA3AF"} 
-            />
-            <Text className={`ml-3 font-medium ${valor === 'SI' ? 'text-[#1E3A8A]' : 'text-gray-600'}`}>
-              Confirmar respuesta
-            </Text>
-          </TouchableOpacity>
-        );
+        // 1. Parametrización de Texto: 
+  const textoCheckbox = opciones || etiqueta || 'Confirmar respuesta';
+  
+  // Si en el futuro cambian a '1'/'0' o 'true'/'false', solo lo cambias aquí.
+  const valorTrue =  'SI';
+  const valorFalse = 'NO' ;
+  
+  // 3. Estado booleano derivado (hace el código más limpio)
+  const isChecked = valor === valorTrue;
+
+  return (
+    <TouchableOpacity 
+      disabled={!esEditable}
+      onPress={() => { 
+        onChangeText(isChecked ? valorFalse : valorTrue); 
+        onBlur(); 
+      }}
+      className={`flex-row items-center p-4 border-2 rounded-xl bg-white ${containerClasses}`}
+    >
+      <Feather 
+        name={isChecked ? 'check-square' : 'square'} 
+        size={24} 
+        color={isChecked ? "#1E3A8A" : "#9CA3AF"} 
+      />
+      {/* Se agrega 'flex-1' para que si el texto de la BD es muy largo, pase a la siguiente línea sin romper la UI */}
+      <Text className={`ml-3 font-medium flex-1 ${isChecked ? 'text-[#1E3A8A]' : 'text-gray-600'}`}>
+        {textoCheckbox}
+      </Text>
+    </TouchableOpacity>
+  );
+        
       case 'TEXTAREA':
         return (
           <TextInput
@@ -260,7 +275,7 @@ export const SurveyField = ({
     <View className="w-full">
       {/* Label de la pregunta */}
       {etiqueta !== 'Pregunta sin etiqueta' && (
-        <Text className="text-gray-500 font-bold text-xs uppercase tracking-wider mb-2 ml-1">
+        <Text className="text-gray-500 font-bold text-xs-base tracking-wider mb-2 ml-1">
           {etiqueta}
         </Text>
       )}
