@@ -1,4 +1,29 @@
-echo node_modules/ > .easignore
-echo .expo/ >> .easignore
-echo android/ >> .easignore
-echo ios/ >> .easignore
+# Dependencias (EAS las descarga e instala en la nube)
+node_modules/
+
+# Carpetas de Expo y Metro
+.expo/
+.metro/
+
+# Archivos de compilación local de Android (Los culpables pesados)
+android/build/
+android/app/build/
+android/.gradle/
+android/.idea/
+
+# Archivos de compilación local de iOS (Por si acaso)
+ios/build/
+ios/DerivedData/
+
+# Archivos temporales y de entorno locales
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Archivos pesados generados localmente (APKs anteriores)
+*.apk
+*.aab
