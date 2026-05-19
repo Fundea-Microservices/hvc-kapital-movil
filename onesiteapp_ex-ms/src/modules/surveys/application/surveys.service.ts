@@ -173,7 +173,7 @@ export class SurveysService {
             IdPregunta: resp.idPregunta,
             UUID_Instancia: resp.uuidInstancia || null,
             Valor: resp.valor || null,
-            IdEncabezado: nuevoIdCaptura // <-- COLUMNA CONFIRMADA
+            IdCaptura: nuevoIdCaptura 
           })
           .execute();
       }
