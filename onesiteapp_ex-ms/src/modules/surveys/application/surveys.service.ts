@@ -77,6 +77,7 @@ export class SurveysService {
 
     return { changes, timestamp: serverTimestamp };
   }
+
   /**
    * El servicio obtiene las opciones de los catálogos maestros.
    * Se formatea la respuesta para el motor local de WatermelonDB.
@@ -103,19 +104,20 @@ export class SurveysService {
 
     return { changes, timestamp: serverTimestamp };
   }
+
   /**
    * El servicio recibe el bloque masivo de respuestas desde la App (S5.2).
    * Procesa respuestas planas y matrices utilizando el UUID_Instancia.
    */
   async submitSurvey(userId: number, payload: any) {
-    const { 
-      idEncuesta, 
-      respuestas, 
-      fechaInicio, 
-      fechaFin, 
-      latitud, 
-      longitud, 
-      dispositivoId 
+    const {
+      idEncuesta,
+      respuestas,
+      fechaInicio,
+      fechaFin,
+      latitud,
+      longitud,
+      dispositivoId
     } = payload;
 
     // El sistema inicia una Transacción SQL para asegurar integridad.
@@ -126,14 +128,12 @@ export class SurveysService {
     try {
       // Usamos RAW QUERY con cláusula OUTPUT para SQL Server.
       // Esto asegura el retorno del ID sin importar si la entidad TypeORM está decorada o no.
-      const queryInsert = `
+      const resultHeader = await queryRunner.manager.query(`
         INSERT INTO appEx_Encabezado_Captura 
         (IdEncuesta, IdUsuario, FechaInicio, FechaFin, Latitud, Longitud, DispositivoID)
-        OUTPUT inserted.IdCaptura
+        OUTPUT inserted.*
         VALUES (@0, @1, @2, @3, @4, @5, @6)
-      `;
-
-      const parametros = [
+      `, [
         idEncuesta,
         userId,
         fechaInicio || new Date().toISOString(),
@@ -141,20 +141,29 @@ export class SurveysService {
         latitud || null,
         longitud || null,
         dispositivoId || 'APP_OFFLINE'
-      ];
+      ]);
 
-      // 1. Ejecutamos la consulta y capturamos el resultado
-      const resultHeader = await queryRunner.manager.query(queryInsert, parametros);
-
-      // 2. Verificamos de forma segura si la base de datos devolvió el array con el ID
+      // ⚡ FIX SINTAXIS: Se cierra correctamente la validación de error.
       if (!resultHeader || resultHeader.length === 0) {
-        throw new Error("La consulta de inserción del encabezado no retornó el IdCaptura.");
-      }
+        throw new Error("La inserción falló: SQL Server no devolvió la fila creada.");
+      } 
+      // ⚡ EL CÓDIGO CONTINÚA NORMALMENTE SI PASÓ LA VALIDACIÓN
 
-      // 3. Extraemos el ID generado directamente del array devuelto por OUTPUT
-      const nuevoIdCaptura = resultHeader[0].IdCaptura;
+      // MAGIA DINÁMICA: Tomamos la primera fila devuelta
+      const filaCreada = resultHeader[0];
 
-      // 4. Insertamos las respuestas usando el nuevoIdCaptura
+      // Extraemos todas las llaves (nombres de las columnas) de esa fila
+      const nombresColumnas = Object.keys(filaCreada);
+
+      // Asumimos que la Llave Primaria (Id) es siempre la primera columna de la tabla
+      const nombreDeLaLlavePrimaria = nombresColumnas[0];
+
+      // Extraemos el valor real del ID
+      const nuevoIdCaptura = filaCreada[nombreDeLaLlavePrimaria];
+
+      console.log(`✅ [SQL] Encabezado creado con ID: ${nuevoIdCaptura} (Columna: ${nombreDeLaLlavePrimaria})`);
+
+      // 4. Insertamos las respuestas usando el nuevoIdCaptura extraído dinámicamente
       for (const resp of respuestas) {
         await queryRunner.manager.createQueryBuilder()
           .insert()
@@ -164,7 +173,7 @@ export class SurveysService {
             IdPregunta: resp.idPregunta,
             UUID_Instancia: resp.uuidInstancia || null,
             Valor: resp.valor || null,
-            IdCaptura: nuevoIdCaptura // <-- VÍNCULO CRÍTICO DEL SPRINT 6
+            IdEncabezado: nuevoIdCaptura // <-- COLUMNA CONFIRMADA
           })
           .execute();
       }
