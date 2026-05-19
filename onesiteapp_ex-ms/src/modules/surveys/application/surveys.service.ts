@@ -172,8 +172,7 @@ export class SurveysService {
             IdEncuesta: idEncuesta,
             IdPregunta: resp.idPregunta,
             UUID_Instancia: resp.uuidInstancia || null,
-            Valor: resp.valor || null,
-            IdCaptura: nuevoIdCaptura 
+            Valor: resp.valor || null
           })
           .execute();
       }
