@@ -131,7 +131,7 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
           <View className="px-6 pt-6 pb-4 bg-white border-b border-gray-50">
             <Text className="text-sm font-bold text-[#F59E0B] uppercase tracking-wider">Bienvenido</Text>
             <Text className="text-2xl font-black text-[#1E3A8A] mt-1">
-              Hola, {nombreCompleto || 'Asesor'}
+              Hola, {nombreCompleto || 'Colaborador'}
             </Text>
             <Text className="text-gray-500 text-xs mt-2 leading-4">
               Gracias por ser parte del grupo corporativo FUNDEA ¡Que buena idea!
@@ -266,9 +266,9 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
         <View className="flex-1 bg-black/40 flex-row">
           <View className="w-[80%] bg-white h-full shadow-2xl">
             <View className="p-6 bg-[#1E3A8A] pt-16">
-              <Text className="text-white font-black text-2xl tracking-tight">Menú SGRAS</Text>
+              <Text className="text-white font-black text-2xl tracking-tight">SGRAS</Text>
               <Text className="text-blue-100 text-sm mt-1 font-bold">
-                Hola, {nombreCompleto || 'Asesor'}
+                Hola, {nombreCompleto || 'Colaborador'}
               </Text>
               <Text className="text-blue-200/60 text-xs mt-0.5">Corporación FUNDEA</Text>
             </View>

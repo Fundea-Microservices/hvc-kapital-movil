@@ -1,5 +1,5 @@
 import { Model } from '@nozbe/watermelondb';
-import { field, relation } from '@nozbe/watermelondb/decorators';
+import { field, relation, text } from '@nozbe/watermelondb/decorators';
 
 /**
  * El modelo representa las secciones visuales que alimentarán el Acordeón Inteligente.
@@ -7,8 +7,8 @@ import { field, relation } from '@nozbe/watermelondb/decorators';
 export default class LocalSeccion extends Model {
   static table = 'local_seccion';
 
-  @field('id_encuesta') id_encuesta!: string;
-  @field('nombre') nombre!: string;
+  @text('id_encuesta') id_encuesta!: string;
+  @text('titulo') nombre!: string;;
   @field('orden') orden!: number;
   @field('es_visible_default') es_visible_default!: number;
 }

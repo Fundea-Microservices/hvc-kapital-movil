@@ -22,36 +22,40 @@ export const SurveyField = ({
 }: SurveyFieldProps) => {
 
   const [isGpsLoading, setIsGpsLoading] = useState(false);
-
-  // Estado para controlar la visibilidad del Calendario
   const [showDatePicker, setShowDatePicker] = useState(false);
 
   const containerClasses = esEditable 
     ? (esObligatorio && !valor ? "border-red-500" : "border-blue-500") 
     : "border-gray-200 bg-gray-100";
 
-  // --- PARSEO SEGURO DE OPCIONES (Para Radio y Selects) ---
+  // --- PARSEO SEGURO Y ROBUSTO DE OPCIONES ---
   let listaOpciones: string[] = [];
   if (opciones) {
     try {
-      // Intentamos convertir '["Masculino", "Femenino"]' a un arreglo de JS
+      // Intento A: Si viene como JSON string válido '["A", "B"]'
       listaOpciones = JSON.parse(opciones);
     } catch (e) {
-      console.warn(`Error al parsear opciones para la pregunta ${etiqueta}:`, opciones);
+      // Intento B (Salvavidas): Si viene como texto plano separado por comas "A, B"
+      if (typeof opciones === 'string' && opciones.includes(',')) {
+        listaOpciones = opciones.split(',').map(o => o.trim());
+      } else if (opciones !== '') {
+        // Si es una opción única
+        listaOpciones = [opciones.trim()];
+      }
     }
   }
 
   // --- MANEJO DE FECHAS ---
   const handleDateChange = (event: any, selectedDate?: Date) => {
-    setShowDatePicker(Platform.OS === 'ios'); // En iOS el modal se queda abierto
+    setShowDatePicker(Platform.OS === 'ios');
     if (selectedDate && event.type !== 'dismissed') {
-      // Formateamos a YYYY-MM-DD
       const formattedDate = selectedDate.toISOString().split('T')[0];
       onChangeText(formattedDate);
       onBlur();
     }
   };
-  // --- FUNCIÓN PARA CAPTURAR GPS ---
+
+  // --- CAPTURA DE GPS ---
   const handleGetLocation = async () => {
     setIsGpsLoading(true);
     try {
@@ -63,7 +67,6 @@ export const SurveyField = ({
       }
 
       let location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      // Guardamos la latitud y longitud como respuesta
       onChangeText(`${location.coords.latitude}, ${location.coords.longitude}`);
     } catch (error) {
       Alert.alert('Error GPS', 'Asegúrese de tener el GPS encendido.');
@@ -117,7 +120,6 @@ export const SurveyField = ({
               <Feather name="calendar" size={20} color={esEditable ? "#1E3A8A" : "#9CA3AF"} />
             </TouchableOpacity>
 
-            {/* Componente Nativo de Calendario */}
             {showDatePicker && (
               <DateTimePicker
                 value={valor ? new Date(valor) : new Date()}
@@ -150,43 +152,37 @@ export const SurveyField = ({
                 </TouchableOpacity>
               ))
             ) : (
-              <Text className="text-red-500 text-xs italic">Opciones mal configuradas en BD</Text>
+              <Text className="text-amber-500 text-xs italic">Cargando opciones o catálogo vacío...</Text>
             )}
           </View>
         );
 
       case 'CHECKBOX':
-        // 1. Parametrización de Texto: 
-  const textoCheckbox = opciones || etiqueta || 'Confirmar respuesta';
-  
-  // Si en el futuro cambian a '1'/'0' o 'true'/'false', solo lo cambias aquí.
-  const valorTrue =  'SI';
-  const valorFalse = 'NO' ;
-  
-  // 3. Estado booleano derivado (hace el código más limpio)
-  const isChecked = valor === valorTrue;
+        const textoCheckbox = opciones || etiqueta || 'Confirmar respuesta';
+        const valorTrue = 'SI';
+        const valorFalse = 'NO';
+        const isChecked = valor === valorTrue;
 
-  return (
-    <TouchableOpacity 
-      disabled={!esEditable}
-      onPress={() => { 
-        onChangeText(isChecked ? valorFalse : valorTrue); 
-        onBlur(); 
-      }}
-      className={`flex-row items-center p-4 border-2 rounded-xl bg-white ${containerClasses}`}
-    >
-      <Feather 
-        name={isChecked ? 'check-square' : 'square'} 
-        size={24} 
-        color={isChecked ? "#1E3A8A" : "#9CA3AF"} 
-      />
-      {/* Se agrega 'flex-1' para que si el texto de la BD es muy largo, pase a la siguiente línea sin romper la UI */}
-      <Text className={`ml-3 font-medium flex-1 ${isChecked ? 'text-[#1E3A8A]' : 'text-gray-600'}`}>
-        {textoCheckbox}
-      </Text>
-    </TouchableOpacity>
-  );
-        
+        return (
+          <TouchableOpacity 
+            disabled={!esEditable}
+            onPress={() => { 
+              onChangeText(isChecked ? valorFalse : valorTrue); 
+              onBlur(); 
+            }}
+            className={`flex-row items-center p-4 border-2 rounded-xl bg-white ${containerClasses}`}
+          >
+            <Feather 
+              name={isChecked ? 'check-square' : 'square'} 
+              size={24} 
+              color={isChecked ? "#1E3A8A" : "#9CA3AF"} 
+            />
+            <Text className={`ml-3 font-medium flex-1 ${isChecked ? 'text-white' : 'text-gray-600'}`}>
+              {textoCheckbox}
+            </Text>
+          </TouchableOpacity>
+        );
+          
       case 'TEXTAREA':
         return (
           <TextInput
@@ -195,12 +191,13 @@ export const SurveyField = ({
             value={valor}
             onChangeText={onChangeText}
             onBlur={onBlur}
-            multiline={true} // Esto lo convierte en Textarea
+            multiline={true}
             numberOfLines={4}
-            textAlignVertical="top" // Para que el texto inicie arriba en Android
+            textAlignVertical="top"
             placeholder={esEditable ? "Escriba los detalles aquí..." : ""}
           />
         );
+
       case 'TELEFONO':
         return (
           <TextInput
@@ -209,15 +206,12 @@ export const SurveyField = ({
             value={valor}
             onChangeText={onChangeText}
             onBlur={onBlur}
-            keyboardType="phone-pad" // Despliega el teclado numérico de teléfono
+            keyboardType="phone-pad"
             placeholder={esEditable ? "Ej: 5555-4444" : ""}
           />
         );
 
-      // EQUIVALENTE A <select> y <option>
       case 'SELECT':
-        // En una app real de producción, aquí usaríamos una librería como @react-native-picker/picker
-        // Por ahora, simularemos un selector con un Modal (como hicimos con la fecha) o lo renderizaremos como botones si son pocos.
         return (
           <View className={`border-2 rounded-xl bg-white overflow-hidden ${containerClasses}`}>
             <Picker
@@ -228,28 +222,25 @@ export const SurveyField = ({
               }}
               enabled={esEditable}
               dropdownIconColor="#1E3A8A"
-              mode="dropdown" // "dialog" para modal, "dropdown" para menú
+              mode="dropdown"
+              // ⚡ CORRECCIÓN DE ESTILO: Fuerza el color de fuente del contenedor
+              style={{ color: '#1F2937', backgroundColor: '#ffffff' }} 
             >
               <Picker.Item label="Seleccione una opción..." value="" color="#9CA3AF" />
               {listaOpciones.map((opcion) => (
-                <Picker.Item key={opcion} label={opcion} value={opcion} />
+                <Picker.Item 
+                  key={opcion} 
+                  label={opcion} 
+                  value={opcion} 
+                  // ⚡ CORRECCIÓN CRÍTICA: Rompe el bug de texto blanco sobre fondo blanco de Android
+                  color="#1F2937" 
+                  style={{ backgroundColor: '#ffffff' }}
+                />
               ))}
             </Picker>
           </View>
         );
 
-      default: // TEXTO normal
-        return (
-          <TextInput
-            className={`border-2 rounded-xl p-4 text-base text-gray-800 bg-white ${containerClasses}`}
-            editable={esEditable}
-            value={valor}
-            onChangeText={onChangeText}
-            onBlur={onBlur}
-            placeholder={esEditable ? "Escriba aquí..." : ""}
-          />
-        );
-        // EQUIVALENTE A BOTÓN DE GEOLOCALIZACIÓN
       case 'COORDENADAS':
         return (
           <View className={`flex-row items-center justify-between border-2 rounded-xl p-4 bg-white ${containerClasses}`}>
@@ -268,14 +259,25 @@ export const SurveyField = ({
             </TouchableOpacity>
           </View>
         );
+
+      default: //  TEXTO NORMAL AL FINAL
+        return (
+          <TextInput
+            className={`border-2 rounded-xl p-4 text-base text-gray-800 bg-white ${containerClasses}`}
+            editable={esEditable}
+            value={valor}
+            onChangeText={onChangeText}
+            onBlur={onBlur}
+            placeholder={esEditable ? "Escriba aquí..." : ""}
+          />
+        );
     }
   };
 
   return (
     <View className="w-full">
-      {/* Label de la pregunta */}
       {etiqueta !== 'Pregunta sin etiqueta' && (
-        <Text className="text-gray-500 font-bold text-xs-base tracking-wider mb-2 ml-1">
+        <Text className="text-gray-500 font-bold text-xs tracking-wider mb-2 ml-1">
           {etiqueta}
         </Text>
       )}

@@ -8,8 +8,11 @@ import axios from 'axios';
 // ============================================================================
 // 1. FUNCIÓN PRINCIPAL DE SINCRONIZACIÓN DE ENCUESTAS (Deltas)
 // ============================================================================
+let isSyncRunning = false;
+
 export const runFullSync = async () => {
   console.log('🔄 [SYNC] Iniciando sincronización...');
+  isSyncRunning = true; // Cerramos el candado
   try {
     await synchronize({
       database,
@@ -58,7 +61,7 @@ export const runFullSync = async () => {
             created: seccionesServidor.map((row: any) => ({
               id: row.id?.toString(),
               id_encuesta: row.id_encuesta?.toString(),
-              nombre:  row.titulo || row.nombre || 'Sección',
+              titulo:  row.titulo || row.nombre || 'Sección',
               orden: row.orden || 1
             })),
             updated: [], deleted: []
@@ -74,15 +77,23 @@ export const runFullSync = async () => {
                 id_seccion: row.id_seccion?.toString(),
                 id_encuesta: idEncuestaReal, 
                 id_matriz_padre: row.id_matriz_padre?.toString() || null,
-                sintaxis_calculo: row.sintaxis_calculo || null,
-                regla_visibilidad: row.regla_visibilidad || null,
-                regla_validacion: row.regla_validacion || null,
-                etiqueta: row.etiqueta || 'Sin etiqueta',
-                tipo_dato: row.tipo_dato || 'TEXTO',
-                opciones: row.opciones || null,
-                es_editable: row.es_editable === 1 ? 1 : 0,
-                es_visible_default: row.es_visible_default === 1 ? 1 : 0,
-                es_obligatorio: row.es_obligatorio === 1 ? 1 : 0 || row.EsObligatorio === 1 ? 1 : 0,
+                sintaxis_calculo: row.sintaxis_calculo || row.sintaxisCalculo || null,
+                regla_visibilidad: row.regla_visibilidad || row.reglaVisibilidad || null,
+                regla_validacion: row.regla_validacion || row.reglaValidacion || null,
+                etiqueta: row.etiqueta || row.Etiqueta || 'Sin etiqueta',
+                tipo_dato: row.tipo_dato || row.tipoDato || 'TEXTO',
+                
+                //  Añadimos las columnas que faltaban en el contrato de mapeo
+                // Protegemos por si el backend lo envía con nomenclaturas distintas
+                opciones: row.opciones || row.Opciones || null,
+                origen_datos_tipo: row.origen_datos_tipo || row.origenDatosTipo || row.origen_datos_tipo || null,
+                origen_datos_cmd: row.origen_datos_cmd || row.origenDatosCmd || row.origen_datos_cmd || null,
+                
+                es_editable: (row.es_editable === 1 || row.esEditable === 1) ? 1 : 0,
+                es_visible_default: (row.es_visible_default === 1 || row.esVisibleDefault === 1) ? 1 : 0,
+                
+                // Limpiamos la precedencia lógica del operador condicional que estaba mezclado
+                es_obligatorio: (row.es_obligatorio === 1 || row.EsObligatorio === 1 || row.esObligatorio === 1) ? 1 : 0,
                 orden: row.orden || 1,
               };
             }),
@@ -170,6 +181,10 @@ export const runFullSync = async () => {
     console.error("❌ Error crítico durante la sincronización:", error);
     throw error;
   }
+  finally {
+    // ⚡ FIX: Abrimos el candado termine bien o mal
+    isSyncRunning = false; 
+  }
 };
 
 // ============================================================================
@@ -198,12 +213,12 @@ export const sincronizarCatalogos = async (databaseInstance: Database, token: st
       
       const nuevosRegistros = catalogosRemotos.map((cat: any) => 
         catalogoCollection.prepareCreate((record: any) => {
-          record.id_remoto = cat.id;
-          record.nombre_catalogo = cat.nombre_catalogo;
-          record.codigo_catalogo = cat.codigo_catalogo;
-          record.codigo_opcion = cat.codigo_opcion;
-          record.valor_opcion = cat.valor_opcion;
-          record.id_padre_opcion = cat.id_padre_opcion;
+          record.idRemoto = cat.id?.toString() || '';
+          record.nombreCatalogo = cat.nombre_catalogo || '';
+          record.codigoCatalogo = cat.codigo_catalogo || '';
+          record.codigoOpcion = cat.codigo_opcion || '';
+          record.valorOpcion = cat.valor_opcion || '';
+          record.idPadreOpcion = cat.id_padre_opcion || null;
         })
       );
 

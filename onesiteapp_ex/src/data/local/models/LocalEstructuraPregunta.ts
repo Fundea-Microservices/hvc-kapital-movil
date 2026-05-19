@@ -1,5 +1,5 @@
 import { Model } from '@nozbe/watermelondb';
-import { field, relation } from '@nozbe/watermelondb/decorators';
+import { field, relation, text } from '@nozbe/watermelondb/decorators';
 
 /**
  * Modelo Unificado: LocalEstructuraPregunta (Sprint 1.3)
@@ -19,11 +19,11 @@ export default class LocalEstructuraPregunta extends Model {
   @field('id_matriz_padre') id_matriz_padre!: string | null;
 
   // Campos de Visualización (UI)
-  @field('etiqueta') etiqueta!: string; // Viene de 'Etiqueta' en SQL
-  @field('tipo_dato') tipo_dato!: string; // TEXTO, DECIMAL, ENTERO, FECHA, MATRIZ, etc.
+  @text('tipo_dato') tipo_dato!: string; // TEXTO, DECIMAL, ENTERO, FECHA, MATRIZ, etc.
+  @text('etiqueta') etiqueta!: string; // Viene de 'Etiqueta' en SQL
   @field('origen_datos_tipo') origen_datos_tipo!: string | null; // MAESTRO, SERVICIO, etc.
   @field('origen_datos_cmd') origen_datos_cmd!: string | null; // Nombre del catálogo
-  @field('opciones') opciones!: string | null; // NUEVO: Para guardar el JSON de Radio/Select
+  @text('opciones') opciones!: string | null; // NUEVO: Para guardar el JSON de Radio/Select
   
   // Reglas de Negocio (Sprint 2 y 3)
   @field('es_editable') es_editable!: number; // 1 = Editable, 0 = Solo lectura

@@ -47,7 +47,7 @@ export const useAuthStore = create<AuthState>()(
         isLoggedIn: true, 
         token: token, 
         userId: userId,
-        nombreCompleto: nombreCompleto || 'Usuario sin nombre',
+        nombreCompleto: nombreCompleto || 'Colaborador',
       }),
 
       // Sincroniza el estado guardado con el estado de la app al iniciar
