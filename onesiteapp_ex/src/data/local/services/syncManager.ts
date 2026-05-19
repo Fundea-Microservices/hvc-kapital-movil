@@ -132,18 +132,43 @@ export const runFullSync = async () => {
         });
 
         for (const [uuid, respuestas] of Object.entries(encuestasAgrupadas)) {
-          const userId = useAuthStore.getState().userId;
+          // Extracción segura del estado de Zustand
+          const authState = useAuthStore.getState() as any;
+          const userIdRaw = authState.userId || authState.user?.id || authState.id;
+          
+          if (!userIdRaw) {
+            console.error("❌ CRÍTICO: No se encontró el ID del usuario en el estado global.");
+            throw new Error(`Falta el ID del usuario logueado en Zustand.`);
+          }
+
+          const userId = Number(userIdRaw); 
           const idEncuesta = respuestas[0].id_encuesta;
 
+          // Cuerpo del paquete JSON
           const payload = {
             idEncuesta: Number(idEncuesta),
+            IdUsuario: userId, 
+            idUsuario: userId,
             respuestas: respuestas.map(r => ({
               idPregunta: Number(r.id_pregunta),
               uuidInstancia: r.uuid_instancia,
-              IdUsuario: userId,
               valor: r.valor
             }))
           };
+
+          // ⚡ FIX CRÍTICO: Inyectamos el ID del usuario en los HEADERS HTTP
+          // Enviamos las variaciones más comunes de nomenclaturas de red
+          const config = {
+            headers: {
+              'x-user-id': userId.toString(),
+              'user-id': userId.toString(),
+              'idusuario': userId.toString(),
+              'IdUsuario': userId.toString(),
+              'X-User-Id': userId.toString(),
+            }
+          };
+          // Imprimimos el payload exacto antes de enviarlo
+          console.log(`🚀 [SYNC PUSH] Enviando payload para UUID ${uuid}:`, JSON.stringify(payload, null, 2));
 
           try {
             await apiClient.post('/surveys/submit', payload);
@@ -158,8 +183,11 @@ export const runFullSync = async () => {
               );
               await database.batch(...updates);
             });
-          } catch (err) {
-            throw new Error(`Error sincronizando captura ${uuid}`);
+            console.log(`✅ [SYNC PUSH] Captura ${uuid} sincronizada con éxito.`);
+          } catch (err: any) {
+            const mensajeBackend = err.response?.data?.message || err.message;
+            console.error(`❌ [SYNC PUSH ERROR] Fallo al subir UUID ${uuid}. Detalle:`, mensajeBackend);
+            throw new Error(`Error sincronizando captura ${uuid}: ${mensajeBackend}`);
           }
         }
       },

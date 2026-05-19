@@ -156,7 +156,7 @@ export const SurveyField = ({
             )}
           </View>
         );
-
+      case 'LISTA':
       case 'CHECKBOX':
         const textoCheckbox = opciones || etiqueta || 'Confirmar respuesta';
         const valorTrue = 'SI';
@@ -240,6 +240,24 @@ export const SurveyField = ({
             </Picker>
           </View>
         );
+        
+        case 'MULTISELECT':
+        // Convertimos el string guardado ("Opt1,Opt3") en un array real para saber cuáles están marcados
+        const opcionesSeleccionadas = valor ? valor.split(',').map(v => v.trim()) : [];
+
+        const toggleOpcionMulti = (opcionSeleccionada: string) => {
+          let nuevaSeleccion;
+          if (opcionesSeleccionadas.includes(opcionSeleccionada)) {
+            // Si ya estaba, la quitamos
+            nuevaSeleccion = opcionesSeleccionadas.filter(opt => opt !== opcionSeleccionada);
+          } else {
+            // Si no estaba, la agregamos
+            nuevaSeleccion = [...opcionesSeleccionadas, opcionSeleccionada];
+          }
+          // Guardamos el array de vuelta como un string separado por comas
+          onChangeText(nuevaSeleccion.join(', '));
+          onBlur();
+        };
 
       case 'COORDENADAS':
         return (

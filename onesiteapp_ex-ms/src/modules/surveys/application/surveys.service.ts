@@ -124,28 +124,38 @@ export class SurveysService {
     await queryRunner.startTransaction();
 
     try {
+      // Usamos RAW QUERY con cláusula OUTPUT para SQL Server.
+      // Esto asegura el retorno del ID sin importar si la entidad TypeORM está decorada o no.
+      const queryInsert = `
+        INSERT INTO appEx_Encabezado_Captura 
+        (IdEncuesta, IdUsuario, FechaInicio, FechaFin, Latitud, Longitud, DispositivoID)
+        OUTPUT inserted.IdCaptura
+        VALUES (@0, @1, @2, @3, @4, @5, @6)
+      `;
 
-      //El sistema inserta el Encabezado y recupera el IdCaptura generado
-      const insertHeaderResult = await queryRunner.manager.createQueryBuilder()
-        .insert()
-        .into('appEx_Encabezado_Captura')
-        .values({
-          IdEncuesta: idEncuesta,
-          IdUsuario: userId, // Viene del token de autenticación
-          FechaInicio: fechaInicio || new Date(),
-          FechaFin: fechaFin || new Date(),
-          Latitud: latitud || null,
-          Longitud: longitud || null,
-          DispositivoID: dispositivoId || 'APP_OFFLINE'
-        })
-        .execute();
+      const parametros = [
+        idEncuesta,
+        userId,
+        fechaInicio || new Date().toISOString(),
+        fechaFin || new Date().toISOString(),
+        latitud || null,
+        longitud || null,
+        dispositivoId || 'APP_OFFLINE'
+      ];
 
-        // Se extrae el ID generado por la base de datos (IDENTITY)
-      const nuevoIdCaptura = insertHeaderResult.identifiers[0].IdCaptura;
+      // 1. Ejecutamos la consulta y capturamos el resultado
+      const resultHeader = await queryRunner.manager.query(queryInsert, parametros);
 
+      // 2. Verificamos de forma segura si la base de datos devolvió el array con el ID
+      if (!resultHeader || resultHeader.length === 0) {
+        throw new Error("La consulta de inserción del encabezado no retornó el IdCaptura.");
+      }
+
+      // 3. Extraemos el ID generado directamente del array devuelto por OUTPUT
+      const nuevoIdCaptura = resultHeader[0].IdCaptura;
+
+      // 4. Insertamos las respuestas usando el nuevoIdCaptura
       for (const resp of respuestas) {
-        // Se inserta cada respuesta en appEx_Respuestas
-        // Nota: TypeORM para SQL Server maneja los parámetros de forma limpia enviando los valores en el array
         await queryRunner.manager.createQueryBuilder()
           .insert()
           .into('appEx_Respuestas')
@@ -163,12 +173,8 @@ export class SurveysService {
       return { success: true, message: 'Encuesta sincronizada correctamente' };
 
     } catch (error: any) {
-      // AQUÍ ESTÁ LA MAGIA: Imprimir el error exacto de SQL en la consola
       console.error('❌ ERROR CRÍTICO EN SQL (submitSurvey):', error.message || error);
-
       await queryRunner.rollbackTransaction();
-
-      // Retornar el mensaje real al frontend para depuración (Opcional en Prod, útil en Dev)
       throw new Error(`Error BD: ${error.message}`);
     } finally {
       await queryRunner.release();
