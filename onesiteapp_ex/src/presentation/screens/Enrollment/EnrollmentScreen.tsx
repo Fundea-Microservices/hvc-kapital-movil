@@ -88,7 +88,11 @@ export const EnrollmentScreen = () => {
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1 bg-gray-100">
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }} bounces={false} keyboardShouldPersistTaps="handled">
+      <ScrollView 
+      contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }} 
+      bounces={false} 
+      keyboardShouldPersistTaps="handled"
+      >
         <View className="flex-1 items-center justify-center px-6 py-10">
 
           <View className="items-center mb-8 mt-12">

@@ -144,7 +144,7 @@ export const runFullSync = async () => {
           const userId = Number(userIdRaw); 
           const idEncuesta = respuestas[0].id_encuesta;
 
-          // Cuerpo del paquete JSON
+          // Cuerpo del paquete JSON óptimo para el DTO
           const payload = {
             idEncuesta: Number(idEncuesta),
             IdUsuario: userId, 
@@ -156,8 +156,7 @@ export const runFullSync = async () => {
             }))
           };
 
-          // ⚡ FIX CRÍTICO: Inyectamos el ID del usuario en los HEADERS HTTP
-          // Enviamos las variaciones más comunes de nomenclaturas de red
+          // Cabeceras HTTP obligatorias para los interceptores del backend
           const config = {
             headers: {
               'x-user-id': userId.toString(),
@@ -167,11 +166,13 @@ export const runFullSync = async () => {
               'X-User-Id': userId.toString(),
             }
           };
-          // Imprimimos el payload exacto antes de enviarlo
+
           console.log(`🚀 [SYNC PUSH] Enviando payload para UUID ${uuid}:`, JSON.stringify(payload, null, 2));
 
           try {
-            await apiClient.post('/surveys/submit', payload);
+            // ⚡ FIX: Agregamos 'config' como tercer parámetro para inyectar los Headers
+            await apiClient.post('/surveys/submit', payload, config);
+            
             await database.write(async () => {
               const capturaCollection = database.collections.get('local_captura');
               const registrosActualizar = await capturaCollection.query(Q.where('uuid_instancia', uuid)).fetch();
@@ -210,7 +211,7 @@ export const runFullSync = async () => {
     throw error;
   }
   finally {
-    // ⚡ FIX: Abrimos el candado termine bien o mal
+    //Abrimos el candado termine bien o mal
     isSyncRunning = false; 
   }
 };

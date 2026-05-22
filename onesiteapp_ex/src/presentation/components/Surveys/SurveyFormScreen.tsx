@@ -150,6 +150,7 @@ export const SurveyFormScreen = ({ onVolverInicio }: SurveyFormScreenProps) => {
               esObligatorio={true}
               esEditable={true}
               valor={respuestas['101']}
+              tipoDato="text"
               onChangeText={(txt) => setRespuestas({...respuestas, '101': txt})}
               onBlur={() => handleBlur('101')}
             />
@@ -160,6 +161,7 @@ export const SurveyFormScreen = ({ onVolverInicio }: SurveyFormScreenProps) => {
                 esObligatorio={false}
                 esEditable={true}
                 valor={respuestas['102']}
+                tipoDato="text"
                 onChangeText={(txt) => setRespuestas({...respuestas, '102': txt})}
                 onBlur={() => handleBlur('102')}
               />
@@ -170,6 +172,7 @@ export const SurveyFormScreen = ({ onVolverInicio }: SurveyFormScreenProps) => {
               esObligatorio={false}
               esEditable={false}
               valor={respuestas['103']}
+              tipoDato="text"
               mensajeInfo="Valor calculado automáticamente"
               onChangeText={() => {}}
               onBlur={() => {}}
@@ -214,12 +217,12 @@ export const SurveyFormScreen = ({ onVolverInicio }: SurveyFormScreenProps) => {
       <Modal visible={isSyncing} transparent animationType="fade">
         <View className="flex-1 bg-black/60 items-center justify-center px-6">
           <View className="bg-white w-full max-w-[300px] rounded-[40px] p-10 items-center">
-            <ActivityIndicator size="large" color="#1E3A8A" />
+            <ActivityIndicator size="large" color="#1E3A8A" className="mb-4" />
             <Text className="text-xl font-bold text-gray-800 mt-6 text-center">
               Enviando datos...
             </Text>
             <Text className="text-gray-500 text-sm mt-2 text-center">
-              El sistema está resguardando su información en el servidor central.
+              Enviando y recibiendo datos de forma segura. Por favor, espere...
             </Text>
           </View>
         </View>

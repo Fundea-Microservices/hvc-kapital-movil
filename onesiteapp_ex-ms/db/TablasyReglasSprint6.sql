@@ -50,7 +50,32 @@ UPDATE appEx_Pregunta
 SET Opciones = 'CAT_GENERO' 
 WHERE Etiqueta LIKE 'Género';
 
---------------------------------------------------------
+
+----------------------------------------------------------
+----------------------------------------------------------
+
+USE OneSiteEx;
+GO
+
+-- 1. Agregamos la columna permitiendo nulos de forma segura
+ALTER TABLE appEx_Respuestas
+ADD IdCaptura BIGINT NULL;
+GO
+
+-- 2. Creamos la relación de Llave Foránea (FK) vinculando ambas tablas
+ALTER TABLE appEx_Respuestas
+ADD CONSTRAINT FK_Respuestas_Encabezado
+FOREIGN KEY (IdCaptura) 
+REFERENCES appEx_Encabezado_Captura(IdCaptura)
+ON DELETE CASCADE; -- Si se borra una captura, se eliminan sus respuestas en cascada
+GO
+
+
+SELECT TYPE_NAME(system_type_id) AS TipoDeDatoReal
+FROM sys.columns 
+WHERE object_id = OBJECT_ID('appEx_Encabezado_Captura') AND name = 'IdCaptura';
+
+----------------------------------------------------------
 ----------------------------------------------------------
 CREATE TABLE stats_SGRAS_Plana (
     IdCaptura BIGINT PRIMARY KEY,

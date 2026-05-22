@@ -3,7 +3,7 @@ import { apiClient } from '../../core/network/apiClient';
 
 // NOTA: Cambia esta IP por la IP local de tu computadora http://TU_IP_LOCAL:3000/api/v1 en la misma red Wi-Fi
 // Ej: 'http://192.168.1.15:3000/api/v1' (No uses localhost en móvil)o  10.0.2.2 si es emulador / process.env.EXPO_PUBLIC_API_URL
-const API_URL = process.env.EXPO_PUBLIC_API_URL; 
+const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 // --- DTOs y Respuestas ---
 interface EnrollPayload {
@@ -43,7 +43,7 @@ export interface TokenPayload {
 
 // Interfaz para la respuesta de permisos
 export interface PermisosResponse {
-  [x: string]: string;
+  [key: string]: string | { lectura: boolean; escritura: boolean; } | any;
   rol: string;
   accesos: {
     lectura: boolean;

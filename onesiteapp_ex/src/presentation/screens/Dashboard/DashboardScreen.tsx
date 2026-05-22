@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Modal, ActivityIndicator, Alert, Dimensions } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import withObservables from '@nozbe/with-observables';
 import { database } from '../../../data/local/database';
@@ -24,6 +24,7 @@ interface Props {
 
 const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const logoutAction = useAuthStore(state => state.logout);
   const nombreCompleto = useAuthStore(state => state.nombreCompleto);
   const screenWidth = Dimensions.get("window").width;
@@ -337,9 +338,14 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
               </TouchableOpacity>
             </ScrollView>
 
-            <View className="p-4 border-t border-gray-100">
+            <View 
+            style={{ 
+          paddingBottom: Math.max(insets.bottom, 16), // Si es 0 (pantalla vieja), asegura un mínimo de 16px
+          paddingHorizontal: 16 
+        }}
+            className="pt-4 border-t border-gray-100">
               <TouchableOpacity
-                className="flex-row items-center p-4 bg-red-50 rounded-xl active:bg-red-100"
+                className="flex-row items-center p-4 bg-red-50 rounded-xl active:bg-red-100 justify-center"
                 onPress={() => {
                   Alert.alert("Cerrar Sesión", "¿Está seguro que desea salir del sistema?", [
                     { text: "Cancelar", style: 'cancel' },

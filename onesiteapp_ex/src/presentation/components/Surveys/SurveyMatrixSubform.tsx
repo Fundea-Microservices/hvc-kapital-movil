@@ -76,6 +76,7 @@ export const SurveyMatrixSubform = ({ visible, tituloMatriz, onClose, onFilaGuar
             esObligatorio={true}
             esEditable={true}
             valor={filaData.nombreLote}
+            tipoDato="text"
             onChangeText={(txt) => setFilaData({ ...filaData, nombreLote: txt })}
             onBlur={() => {}} // El Auto-Save se delega al botón final en las matrices
           />
@@ -85,6 +86,7 @@ export const SurveyMatrixSubform = ({ visible, tituloMatriz, onClose, onFilaGuar
             esObligatorio={true}
             esEditable={true}
             valor={filaData.tamanoLote}
+            tipoDato="text"
             onChangeText={(txt) => setFilaData({ ...filaData, tamanoLote: txt })}
             onBlur={() => {}}
           />

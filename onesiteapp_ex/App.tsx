@@ -10,41 +10,33 @@ import { EnrollmentScreen } from './src/presentation/screens/Enrollment/Enrollme
 import { LoginScreen } from './src/presentation/screens/Login/LoginScreen';
 import { useAuthStore } from './src/presentation/store/useAuthStore'; 
 import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack'
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { DashboardScreen } from './src/presentation/screens/Dashboard/DashboardScreen';
 import { DynamicSurveyScreen } from './src/presentation/screens/DynamicSurvey/DynamicSurveyScreen'; 
 
 const queryClient = new QueryClient();
 const Stack = createNativeStackNavigator();
 
-
 export default function App() {
-  // 1. Usamos checkLocalState para actualizar TODO de un solo golpe
   const { isLoggedIn, isEnrolled, checkLocalState } = useAuthStore();
-  const [isLoading, setIsLoading] = useState(false);
-  
-  //const [viewState, setViewState] = useState<{ name: 'DASHBOARD' | 'SURVEY', params?: string }>({ name: 'DASHBOARD' });
+  const [isLoading, setIsLoading] = useState(false); // Ponlo en true si tu lógica de carga inicial es pesada
 
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        // Validar versión (Opcional)
         const appVersion = Application.nativeApplicationVersion || '1.0.0';
         await apiClient.get(`/devices/version?appVersion=${appVersion}`).catch(() => {});
         
-        // 2. LEER TODA LA PERSISTENCIA
         const enrolledStatus = await SecureStore.getItemAsync('isEnrolled');
         const deviceToken = await SecureStore.getItemAsync('deviceToken');
         const sessionToken = await SecureStore.getItemAsync('token_sesion');
         const userIdRaw = await SecureStore.getItemAsync('user_id');
         
-        // Convertir valores para el Store
         const isAppEnrolled = enrolledStatus === 'true';
         const isUserLoggedIn = !!sessionToken;
         const userId = userIdRaw ? parseInt(userIdRaw, 10) : null;
         const userName = await SecureStore.getItemAsync('user_name');
 
-        // 3. ACTUALIZACIÓN ÚNICA (Evita errores de orden de Hooks)
         checkLocalState(
           isAppEnrolled, 
           deviceToken, 
@@ -64,25 +56,6 @@ export default function App() {
     initializeApp();
   }, [checkLocalState]);
 
-  /**const renderRouter = () => {
-    if (!isEnrolled) return <EnrollmentScreen />;
-    if (!isLoggedIn) return <LoginScreen />;
-
-    if (viewState.name === 'SURVEY' && viewState.params) {
-      return (
-        <DynamicSurveyScreen 
-          idEncuesta={viewState.params} 
-          onVolverInicio={() => setViewState({ name: 'DASHBOARD' })} 
-        />
-      );
-    }
-    return (
-      <DashboardScreen 
-        onAbrirEncuesta={(id: string) => setViewState({ name: 'SURVEY', params: id })} 
-      />
-    );
-  };**/
-
   if (isLoading) {
     return (
       <View className="flex-1 justify-center items-center bg-[#f4f6f8]">
@@ -90,25 +63,32 @@ export default function App() {
         <Text className="mt-4 text-gray-500 font-bold">Verificando seguridad...</Text>
       </View>
     );
-  };
+  }
   
+  //  Se usan Stack.Group para manejar la condicionalidad sin romper el árbol
   return (
     <QueryClientProvider client={queryClient}>
       <NavigationContainer>
         <Stack.Navigator screenOptions={{ headerShown: false }}>
+          
           {!isEnrolled ? (
             // FLUJO 1: Registro de dispositivo
-            <Stack.Screen name="Enrollment" component={EnrollmentScreen} />
+            <Stack.Group>
+              <Stack.Screen name="Enrollment" component={EnrollmentScreen} />
+            </Stack.Group>
           ) : !isLoggedIn ? (
             // FLUJO 2: Autenticación
-            <Stack.Screen name="Login" component={LoginScreen} />
+            <Stack.Group>
+              <Stack.Screen name="Login" component={LoginScreen} />
+            </Stack.Group>
           ) : (
-            // FLUJO 3: App Principal (Dashboard y Encuestas)
-            <>
+            // FLUJO 3: App Principal (Agrupadas sin Fragmentos puros)
+            <Stack.Group>
               <Stack.Screen name="Dashboard" component={DashboardScreen} />
               <Stack.Screen name="DynamicSurvey" component={DynamicSurveyScreen} />
-            </>
+            </Stack.Group>
           )}
+
         </Stack.Navigator>
       </NavigationContainer>
     </QueryClientProvider>

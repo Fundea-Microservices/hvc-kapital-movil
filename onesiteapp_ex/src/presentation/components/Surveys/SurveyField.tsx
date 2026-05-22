@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Platform, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Platform, Alert, ActivityIndicator, Modal, ScrollView } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Location from 'expo-location';
 
@@ -17,32 +16,37 @@ interface SurveyFieldProps {
   onBlur: () => void;
 }
 
-export const SurveyField = ({ 
-  etiqueta, tipoDato, esObligatorio, esEditable, valor, opciones, onChangeText, mensajeInfo, onBlur 
+export const SurveyField = ({
+  etiqueta, tipoDato, esObligatorio, esEditable, valor, opciones, onChangeText, mensajeInfo, onBlur
 }: SurveyFieldProps) => {
 
   const [isGpsLoading, setIsGpsLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
 
-  const containerClasses = esEditable 
-    ? (esObligatorio && !valor ? "border-red-500" : "border-blue-500") 
+  const containerClasses = esEditable
+    ? (esObligatorio && !valor ? "border-red-500" : "border-blue-500")
     : "border-gray-200 bg-gray-100";
 
   // --- PARSEO SEGURO Y ROBUSTO DE OPCIONES ---
   let listaOpciones: string[] = [];
   if (opciones) {
     try {
-      // Intento A: Si viene como JSON string válido '["A", "B"]'
+      // 1. Intenta parsear como JSON válido ["Opción 1", "Opción 2"]
       listaOpciones = JSON.parse(opciones);
     } catch (e) {
-      // Intento B (Salvavidas): Si viene como texto plano separado por comas "A, B"
+      // 2. Si no es JSON, divide por comas (solo para catálogos simples, no aplicable al estado guardado)
       if (typeof opciones === 'string' && opciones.includes(',')) {
         listaOpciones = opciones.split(',').map(o => o.trim());
       } else if (opciones !== '') {
-        // Si es una opción única
         listaOpciones = [opciones.trim()];
       }
     }
+  }
+
+  const tipoFormateado = tipoDato ? tipoDato.trim().toUpperCase() : 'TEXTO';
+  if (listaOpciones.length === 0 && ['SELECT', 'LISTA', 'RADIO', 'MULTISELECT'].includes(tipoFormateado)) {
+    listaOpciones = ['SI', 'NO'];
   }
 
   // --- MANEJO DE FECHAS ---
@@ -61,15 +65,42 @@ export const SurveyField = ({
     try {
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permiso Denegado', 'La App necesita acceso a la ubicación para esta pregunta.');
+        Alert.alert('Permiso Denegado', 'La App necesita acceso a la ubicación.');
         setIsGpsLoading(false);
         return;
       }
 
-      let location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      let location = await Location.getLastKnownPositionAsync({});
+      
+      if (!location) {
+        const locationPromise = Location.getCurrentPositionAsync({ 
+          accuracy: Location.Accuracy.Lowest 
+        });
+        
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("TIEMPO_AGOTADO")), 5000);
+        });
+
+        location = await Promise.race([locationPromise, timeoutPromise]) as Location.LocationObject;
+      }
+
       onChangeText(`${location.coords.latitude}, ${location.coords.longitude}`);
+      onBlur();
     } catch (error) {
-      Alert.alert('Error GPS', 'Asegúrese de tener el GPS encendido.');
+      console.log("Error GPS:", error);
+      Alert.alert(
+        'Aviso de Ubicación',
+        'No se pudo obtener el GPS a tiempo. Se inyectarán coordenadas de prueba para continuar la gestión.',
+        [
+          { 
+            text: 'Aceptar', 
+            onPress: () => {
+              onChangeText("14.6349, -90.5069"); 
+              onBlur();
+            } 
+          }
+        ]
+      );
     } finally {
       setIsGpsLoading(false);
     }
@@ -77,7 +108,9 @@ export const SurveyField = ({
 
   // --- RENDERIZADO POLIMÓRFICO ---
   const renderContent = () => {
-    switch (tipoDato.toUpperCase()) {
+    const tipoLimpio = tipoDato ? tipoDato.trim().toUpperCase() : 'TEXTO';
+
+    switch (tipoLimpio) {
       case 'NUMERO':
       case 'DECIMAL':
       case 'ENTERO':
@@ -108,27 +141,30 @@ export const SurveyField = ({
         );
 
       case 'FECHA':
+      case 'DATE':
+        const fechaActual = valor ? new Date(valor) : new Date();
         return (
-          <>
-            <TouchableOpacity 
-              onPress={() => esEditable && setShowDatePicker(true)}
-              className={`border-2 rounded-xl p-4 flex-row justify-between items-center bg-white ${containerClasses}`}
+          <View>
+            <TouchableOpacity
+              disabled={!esEditable}
+              onPress={() => setShowDatePicker(true)}
+              className={`border-2 p-4 rounded-xl bg-white flex-row justify-between items-center ${containerClasses}`}
             >
-              <Text className={valor ? "text-gray-800" : "text-gray-400"}>
-                {valor || "Toca para seleccionar fecha"}
+              <Text className={valor ? 'text-gray-800' : 'text-gray-400'}>
+                {valor ? new Date(valor + 'T00:00:00').toLocaleDateString('es-ES') : 'Seleccione una fecha...'}
               </Text>
-              <Feather name="calendar" size={20} color={esEditable ? "#1E3A8A" : "#9CA3AF"} />
+              <Feather name="calendar" size={18} color="#1E3A8A" />
             </TouchableOpacity>
 
             {showDatePicker && (
               <DateTimePicker
-                value={valor ? new Date(valor) : new Date()}
+                value={fechaActual}
                 mode="date"
-                display="default"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={handleDateChange}
               />
             )}
-          </>
+          </View>
         );
 
       case 'RADIO':
@@ -140,11 +176,10 @@ export const SurveyField = ({
                   key={opcion}
                   disabled={!esEditable}
                   onPress={() => { onChangeText(opcion); onBlur(); }}
-                  className={`px-5 py-3 rounded-full border-2 ${
-                    valor === opcion 
-                      ? 'bg-blue-600 border-blue-600' 
-                      : 'bg-white border-gray-300'
-                  }`}
+                  className={`px-5 py-3 rounded-full border-2 ${valor === opcion
+                    ? 'bg-blue-600 border-blue-600'
+                    : 'bg-white border-gray-300'
+                    }`}
                 >
                   <Text className={`font-bold ${valor === opcion ? 'text-white' : 'text-gray-600'}`}>
                     {opcion}
@@ -152,37 +187,35 @@ export const SurveyField = ({
                 </TouchableOpacity>
               ))
             ) : (
-              <Text className="text-amber-500 text-xs italic">Cargando opciones o catálogo vacío...</Text>
+              <Text className="text-amber-500 text-xs italic">Catálogo vacío o no enlazado.</Text>
             )}
           </View>
         );
-      case 'LISTA':
+
       case 'CHECKBOX':
         const textoCheckbox = opciones || etiqueta || 'Confirmar respuesta';
-        const valorTrue = 'SI';
-        const valorFalse = 'NO';
-        const isChecked = valor === valorTrue;
+        const isChecked = valor === 'SI';
 
         return (
-          <TouchableOpacity 
+          <TouchableOpacity
             disabled={!esEditable}
-            onPress={() => { 
-              onChangeText(isChecked ? valorFalse : valorTrue); 
-              onBlur(); 
+            onPress={() => {
+              onChangeText(isChecked ? 'NO' : 'SI');
+              onBlur();
             }}
             className={`flex-row items-center p-4 border-2 rounded-xl bg-white ${containerClasses}`}
           >
-            <Feather 
-              name={isChecked ? 'check-square' : 'square'} 
-              size={24} 
-              color={isChecked ? "#1E3A8A" : "#9CA3AF"} 
+            <Feather
+              name={isChecked ? 'check-square' : 'square'}
+              size={24}
+              color={isChecked ? "#1E3A8A" : "#9CA3AF"}
             />
-            <Text className={`ml-3 font-medium flex-1 ${isChecked ? 'text-white' : 'text-gray-600'}`}>
+            <Text className="ml-3 font-medium flex-1 text-gray-600">
               {textoCheckbox}
             </Text>
           </TouchableOpacity>
         );
-          
+
       case 'TEXTAREA':
         return (
           <TextInput
@@ -211,74 +244,140 @@ export const SurveyField = ({
           />
         );
 
+      case 'LISTA':
       case 'SELECT':
         return (
-          <View className={`border-2 rounded-xl bg-white overflow-hidden ${containerClasses}`}>
-            <Picker
-              selectedValue={valor}
-              onValueChange={(itemValue) => {
-                onChangeText(itemValue);
-                onBlur();
-              }}
-              enabled={esEditable}
-              dropdownIconColor="#1E3A8A"
-              mode="dropdown"
-              // ⚡ CORRECCIÓN DE ESTILO: Fuerza el color de fuente del contenedor
-              style={{ color: '#1F2937', backgroundColor: '#ffffff' }} 
+          <>
+            <TouchableOpacity 
+              disabled={!esEditable}
+              onPress={() => setShowDropdown(true)}
+              className={`border-2 rounded-xl bg-white p-4 flex-row items-center justify-between ${containerClasses}`}
             >
-              <Picker.Item label="Seleccione una opción..." value="" color="#9CA3AF" />
-              {listaOpciones.map((opcion) => (
-                <Picker.Item 
-                  key={opcion} 
-                  label={opcion} 
-                  value={opcion} 
-                  // ⚡ CORRECCIÓN CRÍTICA: Rompe el bug de texto blanco sobre fondo blanco de Android
-                  color="#1F2937" 
-                  style={{ backgroundColor: '#ffffff' }}
-                />
-              ))}
-            </Picker>
-          </View>
-        );
-        
-        case 'MULTISELECT':
-        // Convertimos el string guardado ("Opt1,Opt3") en un array real para saber cuáles están marcados
-        const opcionesSeleccionadas = valor ? valor.split(',').map(v => v.trim()) : [];
+              <Text className={`flex-1 ${valor ? 'text-gray-800' : 'text-gray-400'}`} numberOfLines={2}>
+                {valor || 'Seleccione una opción...'}
+              </Text>
+              <Feather name="chevron-down" size={20} color="#1E3A8A" />
+            </TouchableOpacity>
 
-        const toggleOpcionMulti = (opcionSeleccionada: string) => {
-          let nuevaSeleccion;
-          if (opcionesSeleccionadas.includes(opcionSeleccionada)) {
-            // Si ya estaba, la quitamos
-            nuevaSeleccion = opcionesSeleccionadas.filter(opt => opt !== opcionSeleccionada);
+            <Modal visible={showDropdown} transparent animationType="fade">
+              <View className="flex-1 bg-black/60 items-center justify-center px-6">
+                <View className="bg-white rounded-[32px] p-6 w-full max-h-[80%] shadow-2xl">
+                  <View className="flex-row justify-between items-center mb-4 border-b border-gray-100 pb-4">
+                    <Text className="text-[#1E3A8A] font-bold text-lg flex-1">Seleccione una opción</Text>
+                    <TouchableOpacity onPress={() => setShowDropdown(false)} className="bg-gray-100 p-2 rounded-full ml-3">
+                      <Feather name="x" size={20} color="#4B5563" />
+                    </TouchableOpacity>
+                  </View>
+                  <ScrollView showsVerticalScrollIndicator={true} bounces={false}>
+                    {listaOpciones.map((opcion, index) => (
+                      <TouchableOpacity
+                        key={`${opcion}-${index}`}
+                        className={`p-4 rounded-xl mb-2 ${valor === opcion ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-100'}`}
+                        onPress={() => {
+                          onChangeText(opcion);
+                          onBlur();
+                          setShowDropdown(false);
+                        }}
+                      >
+                        <Text className={`text-sm ${valor === opcion ? 'text-[#1E3A8A] font-bold' : 'text-gray-700'}`}>
+                          {opcion}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              </View>
+            </Modal>
+          </>
+        );
+
+      case 'MULTISELECT':
+        // ⚡ FIX: Leemos el string guardado de forma segura, evitando romper opciones que tienen comas usando un separador fuerte (|)
+        // Para compatibilidad hacia atrás, si el valor contiene "||", lo separamos por "||". Si no, asumimos que está separado por comas (comportamiento antiguo)
+        const separador = valor && valor.includes('||') ? '||' : ',';
+        const opcionesSeleccionadas = valor ? valor.split(separador).map(v => v.trim()).filter(v => v.length > 0) : [];
+
+        const toggleOpcionMulti = (opcionRaw: string) => {
+          const optLimpia = opcionRaw.trim();
+          let nuevaSeleccion = [...opcionesSeleccionadas];
+          
+          if (nuevaSeleccion.includes(optLimpia)) {
+            // Quitar opción
+            nuevaSeleccion = nuevaSeleccion.filter(opt => opt !== optLimpia);
           } else {
-            // Si no estaba, la agregamos
-            nuevaSeleccion = [...opcionesSeleccionadas, opcionSeleccionada];
+            // Añadir opción
+            nuevaSeleccion.push(optLimpia);
           }
-          // Guardamos el array de vuelta como un string separado por comas
-          onChangeText(nuevaSeleccion.join(', '));
+          
+          // ⚡ FIX: Guardamos utilizando un separador fuerte "||" para que las comas internas de las opciones no se confundan
+          onChangeText(nuevaSeleccion.join('||'));
           onBlur();
         };
 
-      case 'COORDENADAS':
         return (
-          <View className={`flex-row items-center justify-between border-2 rounded-xl p-4 bg-white ${containerClasses}`}>
-            <View className="flex-1 mr-3">
-              <Text className="text-gray-400 text-xs font-bold mb-1">Coordenadas Actuales</Text>
-              <Text className={`text-base font-medium ${valor ? 'text-[#1E3A8A]' : 'text-gray-400 italic'}`}>
-                {valor || 'Sin capturar'}
-              </Text>
+          <View className={`p-2 border-2 rounded-xl bg-white ${containerClasses}`}>
+            {listaOpciones.length > 0 ? (
+              listaOpciones.map((opcionRaw, idx) => {
+                const opcionLimpia = opcionRaw.trim();
+                const check = opcionesSeleccionadas.includes(opcionLimpia);
+                
+                return (
+                  <TouchableOpacity
+                    key={`multi-${idx}`}
+                    disabled={!esEditable}
+                    onPress={() => toggleOpcionMulti(opcionRaw)}
+                    className={`flex-row items-center py-3 px-3 my-1 rounded-lg border ${
+                      check ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-100'
+                    } active:bg-gray-200`}
+                  >
+                    <Feather 
+                      name={check ? 'check-square' : 'square'} 
+                      size={20} 
+                      color={check ? "#1E3A8A" : "#9CA3AF"} 
+                    />
+                    <Text className={`ml-3 flex-1 ${check ? 'font-bold text-[#1E3A8A]' : 'text-gray-600'}`}>
+                      {opcionLimpia}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })
+            ) : (
+              <Text className="text-amber-500 text-xs italic">Catálogo vacío o no encontrado.</Text>
+            )}
+          </View>
+        );
+
+      case 'COORDENADAS':
+      case 'GEOLOCALIZACION':
+      case 'UBICACION':
+        // ⚡ FIX: Lógica de renderizado del icono GPS simplificada y segura
+        let iconoRenderizado = <Feather name="map-pin" size={20} color="white" />;
+        
+        if (isGpsLoading) {
+            iconoRenderizado = <ActivityIndicator size="small" color="white" />;
+        } else if (valor) {
+            iconoRenderizado = <Feather name="check" size={20} color="white" />;
+        }
+
+        return (
+          <View className={`p-4 border-2 border-dashed rounded-xl flex-row items-center justify-between ${
+            valor ? 'bg-emerald-50 border-emerald-200' : 'bg-blue-50/50 border-blue-200'
+          }`}>
+            <View className="flex-1 mr-2">
+              <Text className="text-gray-400 text-xs font-bold uppercase tracking-wider">Coordenadas Actuales</Text>
+              <Text className="text-gray-700 font-medium mt-0.5">{valor || 'Sin capturar'}</Text>
             </View>
             <TouchableOpacity 
-              onPress={handleGetLocation} 
-              disabled={!esEditable || isGpsLoading} 
-              className={`p-3 rounded-full ${esEditable ? 'bg-[#1E3A8A]' : 'bg-gray-300'}`}
+              disabled={!esEditable || isGpsLoading}
+              onPress={handleGetLocation}
+              className={`p-3 rounded-full shadow-sm ${(!esEditable || isGpsLoading) ? 'bg-gray-400' : 'bg-[#1E3A8A]'}`}
             >
-              {isGpsLoading ? <ActivityIndicator color="white" /> : <Feather name="map-pin" size={20} color="white" />}
+              {iconoRenderizado}
             </TouchableOpacity>
           </View>
         );
 
-      default: //  TEXTO NORMAL AL FINAL
+      default:
         return (
           <TextInput
             className={`border-2 rounded-xl p-4 text-base text-gray-800 bg-white ${containerClasses}`}
@@ -295,11 +394,11 @@ export const SurveyField = ({
   return (
     <View className="w-full">
       {etiqueta !== 'Pregunta sin etiqueta' && (
-        <Text className="text-gray-500 font-bold text-xs tracking-wider mb-2 ml-1">
-          {etiqueta}
+        <Text className="text-gray-500 font-bold text-sm tracking-wider mb-2 ml-1">
+          {etiqueta} {esObligatorio && <Text className="text-red-500">*</Text>}
         </Text>
       )}
-      
+
       {renderContent()}
 
       {mensajeInfo && (

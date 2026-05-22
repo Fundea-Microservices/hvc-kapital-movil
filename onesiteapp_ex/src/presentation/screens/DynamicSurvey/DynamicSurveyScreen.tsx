@@ -22,7 +22,7 @@ interface Props {
   preguntas: LocalEstructuraPregunta[];
   secciones: LocalSeccion[];
   catalogos: CatalogoOpcion[];
-  capturasExistentes: LocalCaptura[]; 
+  capturasExistentes: LocalCaptura[];
 }
 
 const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, capturasExistentes }: Props) => {
@@ -32,7 +32,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   const [respuestas, setRespuestas] = useState<Record<string, string>>({});
   const [instanciasMatriz, setInstanciasMatriz] = useState<Record<string, string[]>>({});
 
-  // ⚡ ID SEGURO: Extraído del router para evitar colapsos si el modelo 'encuesta' está en la fase de carga
+  // Extraído del router para evitar colapsos si el modelo 'encuesta' está en la fase de carga
   const idEncuestaSeguro = route?.params?.idEncuesta || '';
 
   // --- MOTOR DE RESTAURACIÓN DE BORRADORES ---
@@ -46,7 +46,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         const raw = cap._raw;
         const idPregunta = raw.id_pregunta;
         const uuidInstancia = raw.uuid_instancia || '';
-        
+
         const partesUuid = uuidInstancia.split('_');
         const uuidFila = partesUuid[1] || null;
 
@@ -72,11 +72,10 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
 
   // --- DIAGNÓSTICO PROFUNDO EN CONSOLA ---
   useEffect(() => {
-   console.log("=== 🔍 RASTREO DE PREGUNTAS TIPO SELECT/RADIO ===");
-    
-    // Filtramos solo las preguntas que necesitan catálogos
-    const preguntasCombo = preguntas.filter(p => 
-      p.tipo_dato?.toUpperCase() === 'SELECT' || 
+    console.log("=== 🔍 RASTREO DE PREGUNTAS TIPO SELECT/RADIO ===");
+
+    const preguntasCombo = preguntas.filter(p =>
+      p.tipo_dato?.toUpperCase() === 'SELECT' ||
       p.tipo_dato?.toUpperCase() === 'RADIO'
     );
 
@@ -91,7 +90,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
       console.log("⚠️ Alerta: No se encontraron preguntas de tipo SELECT o RADIO en esta encuesta.");
     }
     console.log("=================================================");
-  }, [preguntas]);;
+  }, [preguntas]);
 
   // --- MOTOR DE MATRICES ---
   const añadirFilaMatriz = (idPadre: string) => {
@@ -103,14 +102,36 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     setInstanciasMatriz(prev => ({ ...prev, [idPadre]: prev[idPadre].filter(id => id !== uuidEliminar) }));
   };
 
-  // --- EVALUADOR DE VISIBILIDAD ---
+  // MOTOR UNIFICADO DE REGLAS DE VISIBILIDAD REACTIVAS
   const isQuestionVisible = (p: LocalEstructuraPregunta) => {
     if (!p.regla_visibilidad) return true;
     try {
-      const regla = JSON.parse(p.regla_visibilidad);
-      return respuestas[regla.dependeDe] === regla.valorEsperado;
+      const reglaStr = p.regla_visibilidad.toString().trim();
+
+      // Formato A: Regla configurada en JSON estructurado
+      if (reglaStr.startsWith('{')) {
+        const regla = JSON.parse(reglaStr);
+        return respuestas[regla.dependeDe] === regla.valorEsperado;
+      }
+
+      // Formato B: Regla de coincidencia directa (Ej: "IdPregunta == 'SI'")
+      const matches = reglaStr.match(/(\w+)\s*(==|===|=)\s*['"]([^'"]+)['"]/);
+      if (matches) {
+        const [_, idPreguntaDependiente, __, valorEsperado] = matches;
+        const respuestaActual = respuestas[idPreguntaDependiente] || '';
+        return respuestaActual.toString().toLowerCase() === valorEsperado.toLowerCase();
+      }
+
+      // Formato C: Expresiones complejas evaluadas de forma segura
+      let reglaEvaluada = reglaStr;
+      Object.keys(respuestas).forEach(key => {
+        const val = respuestas[key] ? `'${respuestas[key]}'` : "''";
+        reglaEvaluada = reglaEvaluada.replace(new RegExp(key, 'g'), val);
+      });
+
+      return Function(`"use strict"; return (${reglaEvaluada})`)();
     } catch (e) {
-      return true;
+      return true; // En caso de error de sintaxis, se muestra defensivamente
     }
   };
 
@@ -159,22 +180,16 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     setRespuestas(nuevasRespuestas);
   };
 
-  // ==========================================================================
-  // FIX CRÍTICO ACCIÓN: GUARDAR ACCIÓN DE PAUSA SIN ERRORES EN LA OPERACIÓN
-  // ==========================================================================
   const handlePausarFormulario = async () => {
     setIsSaving(true);
     try {
-      // ⚡ SOLUCIÓN ANTI-CRASH: Inicializamos con un nuevo UUID por defecto
       let instanciaEncuestaUuid = uuid.v4().toString();
 
-      // Validamos de forma estricta y segura si existe un borrador previo en el arreglo
       if (capturasExistentes && capturasExistentes.length > 0) {
         const primerBorrador = capturasExistentes[0];
         if (primerBorrador && primerBorrador._raw) {
           const datosCrudos = primerBorrador._raw as any;
           if (datosCrudos && datosCrudos.uuid_instancia) {
-            // Reutiliza de forma segura el ID de sesión anterior
             instanciaEncuestaUuid = datosCrudos.uuid_instancia.split('_')[0];
           }
         }
@@ -190,7 +205,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         const registrosABorrar = borradoresPrevios.map(r => r.prepareDestroyPermanently());
 
         const batchCreate = Object.entries(respuestas)
-          .filter(([_, valor]) => valor !== '') 
+          .filter(([_, valor]) => valor !== '')
           .map(([key, valor]) => {
             const partes = key.split('_');
             const idPregunta = partes[0];
@@ -201,7 +216,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
               record.id_pregunta = idPregunta;
               record.valor = valor;
               record.uuid_instancia = uuidFila ? `${instanciaEncuestaUuid}_${uuidFila}` : instanciaEncuestaUuid;
-              record.estado_sincro = -1; 
+              record.estado_sincro = -1;
             });
           });
 
@@ -209,7 +224,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
       });
 
       setShowPauseModal(false);
-      navigation.goBack(); // Regresa al Dashboard de bienvenida sin romper la navegación
+      navigation.goBack();
     } catch (error) {
       console.error("❌ Error crítico en operación de pausa:", error);
       Alert.alert("Error", "No se pudo suspender la encuesta de forma segura.");
@@ -232,19 +247,21 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         ).fetch();
         const registrosABorrar = borradoresPrevios.map(r => r.prepareDestroyPermanently());
 
-        const batchCreate = Object.entries(respuestas).map(([key, valor]) => {
-          const partes = key.split('_');
-          const idPregunta = partes[0];
-          const uuidFila = partes[1] || null;
+        const batchCreate = Object.entries(respuestas)
+          .filter(([_, valor]) => valor !== '')
+          .map(([key, valor]) => {
+            const partes = key.split('_');
+            const idPregunta = partes[0];
+            const uuidFila = partes[1] || null;
 
-          return capturaCollection.prepareCreate((record) => {
-            record.id_encuesta = idEncuestaSeguro;
-            record.id_pregunta = idPregunta;
-            record.valor = valor;
-            record.uuid_instancia = uuidFila ? `${instanciaEncuestaUuid}_${uuidFila}` : instanciaEncuestaUuid;
-            record.estado_sincro = 0; 
+            return capturaCollection.prepareCreate((record) => {
+              record.id_encuesta = idEncuestaSeguro;
+              record.id_pregunta = idPregunta;
+              record.valor = valor;
+              record.uuid_instancia = uuidFila ? `${instanciaEncuestaUuid}_${uuidFila}` : instanciaEncuestaUuid;
+              record.estado_sincro = 0;
+            });
           });
-        });
 
         await database.batch(registrosABorrar.concat(batchCreate));
       });
@@ -257,38 +274,26 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     }
   };
 
-  // --- RESOLUCIÓN Y NORMALIZACIÓN DE CATÁLOGOS CON BUSQUEDA INSENSIBLE ---
   const obtenerOpciones = (opcionesString: string | null): string => {
     if (!opcionesString) return '';
 
-    // Normalizamos el token de búsqueda quitando espacios y el prefijo 'CAT_'
     const strBuscar = opcionesString.toString().trim();
     const tokenLimpio = strBuscar.replace('CAT_', '').toLowerCase();
 
-    // Filtramos buscando coincidencias tanto en el nombre del catálogo como en su código de relación
     const items = catalogos
       .filter(c => {
         const rawCat = c._raw as any;
         const nombreCatBD = (rawCat.nombre_catalogo || '').toString().trim().toLowerCase();
         const codigoCatBD = (rawCat.codigo_catalogo || '').toString().trim().toLowerCase();
-        
-        // El candado se abre si coincide con el nombre plano, el nombre con CAT_, o el código alfanumérico
-        return nombreCatBD === tokenLimpio || 
-               nombreCatBD === strBuscar.toLowerCase() ||
-               codigoCatBD === tokenLimpio ||
-               codigoCatBD === strBuscar.toLowerCase();
+
+        return nombreCatBD === tokenLimpio ||
+          nombreCatBD === strBuscar.toLowerCase() ||
+          codigoCatBD === tokenLimpio ||
+          codigoCatBD === strBuscar.toLowerCase();
       })
       .map(c => (c._raw as any).valor_opcion as string);
-      
-    return items.length > 0 ? JSON.stringify(items) : '';
-  };
 
-  const handleVolverAlInicio = () => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-    } else {
-      navigation.reset({ index: 0, routes: [{ name: 'Dashboard' }] }); 
-    }
+    return items.length > 0 ? JSON.stringify(items) : '';
   };
 
   return (
@@ -308,6 +313,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
 
       <ScrollView className="flex-1 p-4" keyboardShouldPersistTaps="handled">
         {secciones.map((seccion) => {
+          //Eliminado el evaluador de visibilidad erróneo para 'pregunta' que crasheaba el renderizado
           const preguntasRaiz = preguntas.filter(p =>
             p.id_seccion === seccion.id && (!p.id_matriz_padre || p.id_matriz_padre === 'null')
           );
@@ -316,7 +322,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
 
           return (
             <View key={seccion.id} className="mb-8">
-              <Text className="text-[#1E3A8A] font-bold text-xs mb-4 ml-2 tracking-widest">
+              <Text className="text-[#1E3A8A] font-bold text-xl mb-4 ml-2 tracking-widest">
                 {seccion.nombre || ((seccion._raw as any).titulo as string) || 'SECCIÓN'}
               </Text>
 
@@ -353,10 +359,11 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                                 etiqueta={hija.etiqueta}
                                 esObligatorio={hija.es_obligatorio === 1}
                                 esEditable={hija.es_editable === 1}
+                                //Mapeo de valor correcto basado en el estado 'respuestas'
                                 valor={respuestas[`${hija.id}_${uuidFila}`] || ''}
-                                // ⚡ RESGUARDO DE ENLACE: Si 'opciones' viene vacío, extrae el catálogo desde 'origen_datos_cmd'
                                 opciones={obtenerOpciones(hija.opciones || (hija._raw as any).origen_datos_cmd)}
-                                onChangeText={(txt) => setRespuestas(prev => ({ ...prev, [`${hija.id}_${uuidFila}`]: txt }))}
+                                //Usamos el actualizador unificado handleRespuestaChange con la combinación compuesta de la matriz
+                                onChangeText={(txt) => handleRespuestaChange(`${hija.id}_${uuidFila}`, txt)}
                                 onBlur={() => { }}
                               />
                             </View>
@@ -375,7 +382,6 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                       esObligatorio={p.es_obligatorio === 1}
                       esEditable={p.es_editable === 1}
                       valor={respuestas[p.id] || ''}
-                      // ⚡ RESGUARDO DE ENLACE: Aplica el mismo sistema de cruce doble para preguntas de raíz
                       opciones={obtenerOpciones(p.opciones || (p._raw as any).origen_datos_cmd)}
                       onChangeText={(txt) => handleRespuestaChange(p.id, txt)}
                       onBlur={() => { }}

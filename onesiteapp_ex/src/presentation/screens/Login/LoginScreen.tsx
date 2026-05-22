@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Modal, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Keyboard, Alert, Image } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Modal, ActivityIndicator, Platform, ScrollView, Keyboard, Alert, Image, TouchableWithoutFeedback } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { useMutation } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 
 import { loginApi, getPermisosApi } from '../../../data/remote/auth.api';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -92,73 +93,79 @@ export const LoginScreen = () => {
   // --- ELIMINADA LA FUNCIÓN handleLogin DUPLICADA QUE CAUSABA ERROR ---
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <KeyboardAwareScrollView
+      //behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       className="flex-1 bg-[#F3F4F6]"
+      contentContainerStyle={{ flexGrow: 1 }}
+      keyboardShouldPersistTaps="handled"
+      bounces={false}
+      enableOnAndroid={true} 
+      extraScrollHeight={20}
     >
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }} bounces={false} keyboardShouldPersistTaps="handled">
-        <View className="flex-1 items-center justify-center px-6 py-10">
-          <View className="items-center mb-10">
-            {/* Imagen del hombre (hombrefundea.jpeg) en un círculo */}
-            <View className="w-24 h-24 rounded-full overflow-hidden mb-4 shadow-md border-2 border-[#1E3A8A]">
-              <Image
-                source={require('../../../../assets/hombrefundea.jpeg')}
-                style={{ width: '100%', height: '100%' }}
-                resizeMode="cover"
-              />
+      {/* TouchableWithoutFeedback ahora ENVUELVE UN SOLO ELEMENTO (el ScrollView) */}
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        
+          <View className="flex-1 items-center justify-center px-6 py-10">
+            <View className="items-center mb-10">
+              {/* Imagen del hombre (hombrefundea.jpeg) en un círculo */}
+              <View className="w-24 h-24 rounded-full overflow-hidden mb-4 shadow-md border-2 border-[#1E3A8A]">
+                <Image
+                  source={require('../../../../assets/hombrefundea.jpeg')}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="cover"
+                />
+              </View>
+
+              {/* Letras OneSite (letras_onesite.jpeg) */}
+              <View className="h-10 w-40 mb-2">
+                <Image
+                  source={require('../../../../assets/letras onesite.jpeg')}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="contain"
+                />
+              </View>
+              <Text className="text-gray-400 tracking-[3px] text-[10px] mt-2 font-bold uppercase">Microfinanzas</Text>
+              <Text className="text-[#1E3A8A] text-2xl font-bold mt-8">Iniciar sesión</Text>
             </View>
 
-            {/* Letras OneSite (letras_onesite.jpeg) */}
-            <View className="h-10 w-40 mb-2">
-              <Image
-                source={require('../../../../assets/letras onesite.jpeg')}
-                style={{ width: '100%', height: '100%' }}
-                resizeMode="contain"
-              />
+            {/* Formulario */}
+            <View className="bg-white w-full max-w-sm rounded-[32px] p-8 shadow-2xl elevation-5">
+              <View className="mb-5">
+                <Text className="text-gray-600 mb-2 font-semibold ml-1">Usuario</Text>
+                <TextInput
+                  className="bg-[#F9FAFB] border border-gray-200 rounded-2xl p-4 text-gray-800 text-base"
+                  placeholder="Ingrese su usuario"
+                  value={username}
+                  onChangeText={setUsername}
+                  autoCapitalize="none"
+                />
+              </View>
+
+              <View className="mb-8">
+                <Text className="text-gray-600 mb-2 font-semibold ml-1">Contraseña</Text>
+                <TextInput
+                  className="bg-[#F9FAFB] border border-gray-200 rounded-2xl p-4 text-gray-800 text-base"
+                  placeholder="Ingrese su contraseña"
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                />
+              </View>
+
+              <TouchableOpacity
+                className={`rounded-2xl py-4 items-center shadow-lg ${username && password ? 'bg-[#1E3A8A]' : 'bg-gray-400'}`}
+                onPress={onPressLogin}
+                disabled={!username || !password || loginMutation.isPending}
+              >
+                <Text className="text-white font-bold text-lg">
+                  {loginMutation.isPending ? 'Validando...' : 'Ingresar'}
+                </Text>
+              </TouchableOpacity>
             </View>
-            <Text className="text-gray-400 tracking-[3px] text-[10px] mt-2 font-bold uppercase">Microfinanzas</Text>
-            <Text className="text-[#1E3A8A] text-2xl font-bold mt-8">Iniciar sesión</Text>
           </View>
+      </TouchableWithoutFeedback>
 
-          {/* Formulario */}
-          <View className="bg-white w-full max-w-sm rounded-[32px] p-8 shadow-2xl elevation-5">
-            <View className="mb-5">
-              <Text className="text-gray-600 mb-2 font-semibold ml-1">Usuario</Text>
-              <TextInput
-                className="bg-[#F9FAFB] border border-gray-200 rounded-2xl p-4 text-gray-800 text-base"
-                placeholder="Ingrese su usuario"
-                value={username}
-                onChangeText={setUsername}
-                autoCapitalize="none"
-              />
-            </View>
-
-            <View className="mb-8">
-              <Text className="text-gray-600 mb-2 font-semibold ml-1">Contraseña</Text>
-              <TextInput
-                className="bg-[#F9FAFB] border border-gray-200 rounded-2xl p-4 text-gray-800 text-base"
-                placeholder="Ingrese su contraseña"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-              />
-            </View>
-
-            <TouchableOpacity
-              className={`rounded-2xl py-4 items-center shadow-lg ${username && password ? 'bg-[#1E3A8A]' : 'bg-gray-400'}`}
-              onPress={onPressLogin}
-              disabled={!username || !password || loginMutation.isPending}
-            >
-              <Text className="text-white font-bold text-lg">
-                {loginMutation.isPending ? 'Validando...' : 'Ingresar'}
-              </Text>
-            </TouchableOpacity>
-
-          </View>
-        </View>
-      </ScrollView>
-
-      {/* Modal Maestro */}
+      {/* El Modal Maestro queda AFUERA del TouchableWithoutFeedback, en el nivel del KeyboardAwareScrollView */}
       <Modal visible={modalState !== 'none'} transparent animationType="fade">
         <View className="flex-1 bg-black/50 items-center justify-center px-6">
           {modalState === 'syncing' ? (
@@ -182,6 +189,7 @@ export const LoginScreen = () => {
           )}
         </View>
       </Modal>
-    </KeyboardAvoidingView >
+
+    </KeyboardAwareScrollView>
   );
 };
