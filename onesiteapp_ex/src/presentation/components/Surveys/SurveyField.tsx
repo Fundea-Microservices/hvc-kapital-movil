@@ -61,18 +61,23 @@ export const SurveyField = ({
 
   // --- CAPTURA DE GPS ---
   const handleGetLocation = async () => {
+    console.log('[GPS] 1. Botón presionado. Activando isGpsLoading = true');
     setIsGpsLoading(true);
     try {
+      console.log(' [GPS] 2. Solicitando permisos a Expo/Android...');
       let { status } = await Location.requestForegroundPermissionsAsync();
+      console.log(` [GPS] 3. Estado del permiso devuelto por el sistema: "${status}"`);
       if (status !== 'granted') {
+        console.log('❌ [GPS] Bloqueo: El usuario o el dispositivo denegó el permiso.');
         Alert.alert('Permiso Denegado', 'La App necesita acceso a la ubicación.');
         setIsGpsLoading(false);
         return;
       }
-
+      console.log(' [GPS] 4. Permisos OK. Buscando última ubicación conocida en caché...');
       let location = await Location.getLastKnownPositionAsync({});
-      
+      console.log(` [GPS] 5. Resultado del caché:`, location ? '¡Encontrada!' : 'Vacía/Null');
       if (!location) {
+        console.log(' [GPS] 6. Forzando lectura directa al satélite con timeout de 5s...');
         const locationPromise = Location.getCurrentPositionAsync({ 
           accuracy: Location.Accuracy.Lowest 
         });
@@ -82,12 +87,20 @@ export const SurveyField = ({
         });
 
         location = await Promise.race([locationPromise, timeoutPromise]) as Location.LocationObject;
+        console.log(' [GPS] 7. Resultado de la carrera de promesas:', location);
       }
-
-      onChangeText(`${location.coords.latitude}, ${location.coords.longitude}`);
+if (location && location.coords) {
+        const strCoords = `${location.coords.latitude}, ${location.coords.longitude}`;
+        console.log(` [GPS] 8. ¡ÉXITO! Guardando coordenadas: ${strCoords}`);
+        onChangeText(strCoords);
       onBlur();
-    } catch (error) {
+    } else {
+      console.log('❌ [GPS] Error raro: Location existe pero no tiene coords.', location);
+        throw new Error("El objeto location vino vacío.");
+      }
+    } catch (error : any) {
       console.log("Error GPS:", error);
+      console.error("❌ [GPS ERROR CRÍTICO]:", error.message || error);
       Alert.alert(
         'Aviso de Ubicación',
         'No se pudo obtener el GPS a tiempo. Se inyectarán coordenadas de prueba para continuar la gestión.',
@@ -95,6 +108,7 @@ export const SurveyField = ({
           { 
             text: 'Aceptar', 
             onPress: () => {
+              console.log(' [GPS] 9. Inyectando coordenadas Fallback (Guatemala).')
               onChangeText("14.6349, -90.5069"); 
               onBlur();
             } 
@@ -102,6 +116,7 @@ export const SurveyField = ({
         ]
       );
     } finally {
+      console.log(' [GPS] 10. Apagando spinner. isGpsLoading = false\n');
       setIsGpsLoading(false);
     }
   };
@@ -109,6 +124,7 @@ export const SurveyField = ({
   // --- RENDERIZADO POLIMÓRFICO ---
   const renderContent = () => {
     const tipoLimpio = tipoDato ? tipoDato.trim().toUpperCase() : 'TEXTO';
+    //console.log(` [CONTRATO BD] Campo: "${etiqueta}" -> Tipo detectado: "${tipoLimpio}"`);
 
     switch (tipoLimpio) {
       case 'NUMERO':
@@ -292,7 +308,7 @@ export const SurveyField = ({
         );
 
       case 'MULTISELECT':
-        // ⚡ FIX: Leemos el string guardado de forma segura, evitando romper opciones que tienen comas usando un separador fuerte (|)
+        // Leemos el string guardado de forma segura, evitando romper opciones que tienen comas usando un separador fuerte (|)
         // Para compatibilidad hacia atrás, si el valor contiene "||", lo separamos por "||". Si no, asumimos que está separado por comas (comportamiento antiguo)
         const separador = valor && valor.includes('||') ? '||' : ',';
         const opcionesSeleccionadas = valor ? valor.split(separador).map(v => v.trim()).filter(v => v.length > 0) : [];
@@ -309,7 +325,7 @@ export const SurveyField = ({
             nuevaSeleccion.push(optLimpia);
           }
           
-          // ⚡ FIX: Guardamos utilizando un separador fuerte "||" para que las comas internas de las opciones no se confundan
+          // Guardamos utilizando un separador fuerte "||" para que las comas internas de las opciones no se confundan
           onChangeText(nuevaSeleccion.join('||'));
           onBlur();
         };
@@ -350,13 +366,18 @@ export const SurveyField = ({
       case 'COORDENADAS':
       case 'GEOLOCALIZACION':
       case 'UBICACION':
-        // ⚡ FIX: Lógica de renderizado del icono GPS simplificada y segura
+        console.log(` [UI RENDER GPS] Dibujando caja. Valor actual: "${valor}", isGpsLoading: ${isGpsLoading}`);
+        // Lógica de renderizado del icono GPS simplificada y segura
         let iconoRenderizado = <Feather name="map-pin" size={20} color="white" />;
         
         if (isGpsLoading) {
+          console.log(' [UI RENDER GPS] -> Decidió pintar Spinner');
             iconoRenderizado = <ActivityIndicator size="small" color="white" />;
         } else if (valor) {
+          console.log(' [UI RENDER GPS] -> Decidió pintar Check (Completado)');
             iconoRenderizado = <Feather name="check" size={20} color="white" />;
+        }else{
+          console.log(' [UI RENDER GPS] -> Decidió pintar Map-Pin (Vacío)');
         }
 
         return (

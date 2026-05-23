@@ -340,7 +340,7 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
 
             <View 
             style={{ 
-          paddingBottom: Math.max(insets.bottom, 16), // Si es 0 (pantalla vieja), asegura un mínimo de 16px
+          paddingBottom: Math.max(insets.bottom, 24), // Si es 0 (pantalla vieja), asegura un mínimo de 24px
           paddingHorizontal: 16 
         }}
             className="pt-4 border-t border-gray-100">

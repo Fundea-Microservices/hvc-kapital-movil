@@ -143,12 +143,31 @@ export const runFullSync = async () => {
 
           const userId = Number(userIdRaw); 
           const idEncuesta = respuestas[0].id_encuesta;
+          // Buscamos si dentro de las respuestas enviadas está la pregunta de coordenadas.
+          // Reemplazar 'ID_PREGUNTA_GPS' por el ID o TipoDato real de tu pregunta de geolocalización si aplica,
+          // o extraemos la ubicación directamente de los metadatos de la primera captura si tu schema la tiene ahí.
+          const registroGps = respuestas.find(r => r.id_pregunta === 'id_pregunta_gps' || (r.valor && r.valor.includes(',')));
+          let latitudEnvio = null;
+          let longitudEnvio = null;
+
+          if (registroGps && registroGps.valor) {
+            const partesGps = registroGps.valor.split(',');
+            if (partesGps.length === 2) {
+              latitudEnvio = partesGps[0].trim();
+              longitudEnvio = partesGps[1].trim();
+            }
+          }
 
           // Cuerpo del paquete JSON óptimo para el DTO
           const payload = {
             idEncuesta: Number(idEncuesta),
             IdUsuario: userId, 
             idUsuario: userId,
+            latitud: latitudEnvio,
+            longitud: longitudEnvio,
+            fechaInicio: new Date().toISOString(),
+            fechaFin: new Date().toISOString(),
+            dispositivoId: 'ONE_SITE_MOBILE',
             respuestas: respuestas.map(r => ({
               idPregunta: Number(r.id_pregunta),
               uuidInstancia: r.uuid_instancia,
@@ -170,7 +189,7 @@ export const runFullSync = async () => {
           console.log(`🚀 [SYNC PUSH] Enviando payload para UUID ${uuid}:`, JSON.stringify(payload, null, 2));
 
           try {
-            // ⚡ FIX: Agregamos 'config' como tercer parámetro para inyectar los Headers
+            // Agregamos 'config' como tercer parámetro para inyectar los Headers
             await apiClient.post('/surveys/submit', payload, config);
             
             await database.write(async () => {

@@ -143,11 +143,11 @@ export class SurveysService {
         dispositivoId || 'APP_OFFLINE'
       ]);
 
-      // ⚡ FIX SINTAXIS: Se cierra correctamente la validación de error.
+      // Se cierra correctamente la validación de error.
       if (!resultHeader || resultHeader.length === 0) {
         throw new Error("La inserción falló: SQL Server no devolvió la fila creada.");
       } 
-      // ⚡ EL CÓDIGO CONTINÚA NORMALMENTE SI PASÓ LA VALIDACIÓN
+      // EL CÓDIGO CONTINÚA NORMALMENTE SI PASÓ LA VALIDACIÓN
 
       // MAGIA DINÁMICA: Tomamos la primera fila devuelta
       const filaCreada = resultHeader[0];
@@ -173,7 +173,7 @@ export class SurveysService {
             IdPregunta: resp.idPregunta,
             UUID_Instancia: resp.uuidInstancia || null,
             Valor: resp.valor || null,
-            nuevoIdCaptura
+            IdCaptura: nuevoIdCaptura
           })
           .execute();
       }
