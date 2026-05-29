@@ -143,10 +143,22 @@ export const runFullSync = async () => {
 
           const userId = Number(userIdRaw); 
           const idEncuesta = respuestas[0].id_encuesta;
+
+          // ⚡ FIX DEFENSIVO GEOLOCALIZACIÓN: 
+          // Buscamos una respuesta que tenga estrictamente la estructura "número, número"
+          // Esto evita que opciones de texto con comas (como "Ríos, lagos...") rompan el header numérico
+          const registroGps = respuestas.find(r => {
+            if (!r.valor || typeof r.valor !== 'string') return false;
+            const partes = r.valor.split(',');
+            if (partes.length !== 2) return false;
+            // Validamos que ambas partes sean números decimales válidos y no letras
+            return !isNaN(parseFloat(partes[0])) && !isNaN(parseFloat(partes[1]));
+          });
+
           // Buscamos si dentro de las respuestas enviadas está la pregunta de coordenadas.
           // Reemplazar 'ID_PREGUNTA_GPS' por el ID o TipoDato real de tu pregunta de geolocalización si aplica,
           // o extraemos la ubicación directamente de los metadatos de la primera captura si tu schema la tiene ahí.
-          const registroGps = respuestas.find(r => r.id_pregunta === 'id_pregunta_gps' || (r.valor && r.valor.includes(',')));
+          // const registroGps = respuestas.find(r => r.id_pregunta === 'id_pregunta_gps' || (r.valor && r.valor.includes(',')));
           let latitudEnvio = null;
           let longitudEnvio = null;
 
@@ -167,7 +179,7 @@ export const runFullSync = async () => {
             longitud: longitudEnvio,
             fechaInicio: new Date().toISOString(),
             fechaFin: new Date().toISOString(),
-            dispositivoId: 'ONE_SITE_MOBILE',
+            dispositivoId:'ONE_SITE_SGRAS',
             respuestas: respuestas.map(r => ({
               idPregunta: Number(r.id_pregunta),
               uuidInstancia: r.uuid_instancia,

@@ -31,6 +31,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   const [isSaving, setIsSaving] = useState(false);
   const [respuestas, setRespuestas] = useState<Record<string, string>>({});
   const [instanciasMatriz, setInstanciasMatriz] = useState<Record<string, string[]>>({});
+  const [seccionExpandidaId, setSeccionExpandidaId] = useState<string | null>(null);
 
   // Extraído del router para evitar colapsos si el modelo 'encuesta' está en la fase de carga
   const idEncuestaSeguro = route?.params?.idEncuesta || '';
@@ -297,8 +298,8 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
-      {/* HEADER */}
+   <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
+      {/* HEADER CORPORATIVO */}
       <View className="flex-row items-center justify-between px-4 py-4 bg-white border-b border-gray-200">
         <TouchableOpacity onPress={() => setShowPauseModal(true)}>
           <Feather name="arrow-left" size={24} color="#374151" />
@@ -311,101 +312,160 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         </View>
       </View>
 
-      <ScrollView className="flex-1 p-4" keyboardShouldPersistTaps="handled">
+      {/* CONTENEDOR DE SECCIONES EN ACORDEÓN */}
+      <ScrollView 
+        className="flex-1 p-4" 
+        keyboardShouldPersistTaps="handled" 
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 100 }} 
+      >
         {secciones.map((seccion) => {
-          //Eliminado el evaluador de visibilidad erróneo para 'pregunta' que crasheaba el renderizado
+          // Validación reactiva: ¿Esta sección es la que debe estar abierta?
+          const estaAbierta = seccionExpandidaId === seccion.id;
+
+          // Filtramos las preguntas raíz que pertenecen únicamente a esta sección
           const preguntasRaiz = preguntas.filter(p =>
             p.id_seccion === seccion.id && (!p.id_matriz_padre || p.id_matriz_padre === 'null')
           );
 
+          // Si la sección no tiene preguntas asignadas por base de datos, la omitimos defensivamente
           if (preguntasRaiz.length === 0) return null;
 
           return (
-            <View key={seccion.id} className="mb-8">
-              <Text className="text-[#1E3A8A] font-bold text-xl mb-4 ml-2 tracking-widest">
-                {seccion.nombre || ((seccion._raw as any).titulo as string) || 'SECCIÓN'}
-              </Text>
+            <View 
+              key={seccion.id} 
+              className="mb-3 bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100"
+            >
+              {/* 🔘 ENCABEZADO DEL ACORDEÓN (BOTÓN DE CONTROL) */}
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => {
+                  // Si das tap a la que ya está abierta se cierra, si no se abre y cierra el resto
+                  setSeccionExpandidaId(estaAbierta ? null : seccion.id);
+                }}
+                className={`flex-row items-center justify-between p-5 ${
+                  estaAbierta ? 'bg-blue-50/40' : 'bg-white'
+                }`}
+              >
+                <View className="flex-row items-center flex-1 pr-4">
+                  {/* Indicador de número/orden redondo */}
+                  <View className={`w-8 h-8 rounded-full items-center justify-center mr-3 ${
+                    estaAbierta ? 'bg-[#1E3A8A]' : 'bg-gray-100'
+                  }`}>
+                    <Text className={`font-black text-xs ${estaAbierta ? 'text-white' : 'text-gray-500'}`}>
+                      {seccion.orden || '#'}
+                    </Text>
+                  </View>
+                  
+                  {/* Título de la sección */}
+                  <Text className={`font-bold text-base flex-1 ${
+                    estaAbierta ? 'text-[#1E3A8A]' : 'text-gray-700'
+                  }`}>
+                    {seccion.nombre || 'Sección informativa'}
+                  </Text>
+                </View>
 
-              {preguntasRaiz.map((p) => {
-                if (!isQuestionVisible(p)) return null;
+                {/* Icono dinámico de flecha */}
+                <Feather 
+                  name={estaAbierta ? "chevron-up" : "chevron-down"} 
+                  size={20} 
+                  color={estaAbierta ? "#1E3A8A" : "#9CA3AF"} 
+                />
+              </TouchableOpacity>
 
-                if (p.tipo_dato?.toUpperCase() === 'MATRIZ') {
-                  const preguntasHijas = preguntas.filter(hija => hija.id_matriz_padre === p.id);
-                  const filas = instanciasMatriz[p.id] || [];
+              {/* 📝 CUERPO DEL ACORDEÓN (PREGUNTAS DINÁMICAS) */}
+              {estaAbierta && (
+                <View className="p-5 border-t border-gray-50 gap-y-5 bg-white">
+                  {preguntasRaiz.map((p) => {
+                    // Validamos reglas de visibilidad reactivas en segundo plano
+                    if (!isQuestionVisible(p)) return null;
 
-                  return (
-                    <View key={p.id} className="mb-6 bg-blue-50/60 p-4 rounded-[32px] border border-blue-100">
-                      <View className="flex-row justify-between items-center mb-4 px-2">
-                        <Text className="font-bold text-[#1E3A8A] flex-1 mr-2">{p.etiqueta}</Text>
-                        <TouchableOpacity onPress={() => añadirFilaMatriz(p.id)} className="bg-[#1E3A8A] px-4 py-2 rounded-full flex-row items-center shadow-sm">
-                          <Feather name="plus" size={16} color="white" />
-                          <Text className="text-white font-bold ml-1 text-xs">Añadir</Text>
-                        </TouchableOpacity>
-                      </View>
+                    // CASO A: LA PREGUNTA ES UNA MATRIZ DINÁMICA (Estructura Multiregistro)
+                    if (p.tipo_dato?.toUpperCase() === 'MATRIZ') {
+                      const preguntasHijas = preguntas.filter(hija => hija.id_matriz_padre === p.id);
+                      const filas = instanciasMatriz[p.id] || [];
 
-                      {filas.map((uuidFila, index) => (
-                        <View key={uuidFila} className="bg-white p-5 rounded-[24px] mb-4 shadow-sm border border-gray-200">
-                          <View className="flex-row justify-between items-center mb-4 border-b border-gray-100 pb-3">
-                            <Text className="text-gray-400 font-black text-[10px] tracking-widest uppercase">REFERENCIA #{index + 1}</Text>
-                            <TouchableOpacity onPress={() => eliminarFilaMatriz(p.id, uuidFila)} className="bg-red-50 p-2 rounded-full">
-                              <Feather name="trash-2" size={16} color="#EF4444" />
+                      return (
+                        <View key={p.id} className="mb-2 bg-blue-50/60 p-4 rounded-[32px] border border-blue-100">
+                          <View className="flex-row justify-between items-center mb-4 px-2">
+                            <Text className="font-bold text-[#1E3A8A] flex-1 mr-2">{p.etiqueta}</Text>
+                            <TouchableOpacity 
+                              onPress={() => añadirFilaMatriz(p.id)} 
+                              className="bg-[#1E3A8A] px-4 py-2 rounded-full flex-row items-center shadow-sm"
+                            >
+                              <Feather name="plus" size={16} color="white" />
+                              <Text className="text-white font-bold ml-1 text-xs">Añadir</Text>
                             </TouchableOpacity>
                           </View>
 
-                          {preguntasHijas.map(hija => (
-                            <View key={hija.id} className="mb-4">
-                              <SurveyField
-                                tipoDato={hija.tipo_dato}
-                                etiqueta={hija.etiqueta}
-                                esObligatorio={hija.es_obligatorio === 1}
-                                esEditable={hija.es_editable === 1}
-                                //Mapeo de valor correcto basado en el estado 'respuestas'
-                                valor={respuestas[`${hija.id}_${uuidFila}`] || ''}
-                                opciones={obtenerOpciones(hija.opciones || (hija._raw as any).origen_datos_cmd)}
-                                //Usamos el actualizador unificado handleRespuestaChange con la combinación compuesta de la matriz
-                                onChangeText={(txt) => handleRespuestaChange(`${hija.id}_${uuidFila}`, txt)}
-                                onBlur={() => { }}
-                              />
+                          {filas.map((uuidFila, index) => (
+                            <View key={uuidFila} className="bg-white p-5 rounded-[24px] mb-4 shadow-sm border border-gray-200">
+                              <View className="flex-row justify-between items-center mb-4 border-b border-gray-100 pb-3">
+                                <Text className="text-gray-400 font-black text-[10px] tracking-widest uppercase">REFERENCIA #{index + 1}</Text>
+                                <TouchableOpacity onPress={() => eliminarFilaMatriz(p.id, uuidFila)} className="bg-red-50 p-2 rounded-full">
+                                  <Feather name="trash-2" size={16} color="#EF4444" />
+                                </TouchableOpacity>
+                              </View>
+
+                              {preguntasHijas.map(hija => (
+                                <View key={hija.id} className="mb-4">
+                                  <SurveyField
+                                    tipoDato={hija.tipo_dato}
+                                    etiqueta={hija.etiqueta}
+                                    esObligatorio={hija.es_obligatorio === 1}
+                                    esEditable={hija.es_editable === 1}
+                                    valor={respuestas[`${hija.id}_${uuidFila}`] || ''}
+                                    opciones={obtenerOpciones(hija.opciones || (hija._raw as any).origen_datos_cmd)}
+                                    onChangeText={(txt) => handleRespuestaChange(`${hija.id}_${uuidFila}`, txt)}
+                                    onBlur={() => { }}
+                                  />
+                                </View>
+                              ))}
                             </View>
                           ))}
                         </View>
-                      ))}
-                    </View>
-                  );
-                }
+                      );
+                    }
 
-                return (
-                  <View key={p.id} className="mb-4 bg-white p-5 rounded-[24px] shadow-sm border border-gray-100">
-                    <SurveyField
-                      tipoDato={p.tipo_dato}
-                      etiqueta={p.etiqueta}
-                      esObligatorio={p.es_obligatorio === 1}
-                      esEditable={p.es_editable === 1}
-                      valor={respuestas[p.id] || ''}
-                      opciones={obtenerOpciones(p.opciones || (p._raw as any).origen_datos_cmd)}
-                      onChangeText={(txt) => handleRespuestaChange(p.id, txt)}
-                      onBlur={() => { }}
-                      mensajeInfo={p.tipo_dato === 'CALCULO' ? "Calculado automáticamente" : undefined}
-                    />
-                  </View>
-                );
-              })}
+                    // CASO B: PREGUNTA ESTÁNDAR COMPUESTA (Texto, Select, Radio, GPS, etc.)
+                    return (
+                      <View key={p.id} className="mb-2">
+                        <SurveyField
+                          tipoDato={p.tipo_dato}
+                          etiqueta={p.etiqueta}
+                          esObligatorio={p.es_obligatorio === 1}
+                          esEditable={p.es_editable === 1}
+                          valor={respuestas[p.id] || ''}
+                          opciones={obtenerOpciones(p.opciones || (p._raw as any).origen_datos_cmd)}
+                          onChangeText={(txt) => handleRespuestaChange(p.id, txt)}
+                          onBlur={() => { }}
+                          mensajeInfo={p.tipo_dato === 'CALCULO' ? "Calculado automáticamente" : undefined}
+                        />
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
             </View>
           );
         })}
 
+        {/* BOTÓN EMISOR DE FINALIZACIÓN GESTIÓN */}
         <TouchableOpacity
-          className={`p-5 rounded-[22px] flex-row justify-center items-center mb-16 shadow-lg ${isSaving ? 'bg-gray-400' : 'bg-[#059669]'}`}
+          className={`p-5 rounded-[22px] flex-row justify-center items-center mt-6 mb-16 shadow-lg ${isSaving ? 'bg-gray-400' : 'bg-[#059669]'}`}
           onPress={handleFinalizarFormulario}
           disabled={isSaving}
         >
           {isSaving ? <ActivityIndicator color="white" /> : (
-            <><Feather name="check-circle" size={24} color="white" /><Text className="text-white font-bold text-lg ml-3">Finalizar Gestión</Text></>
+            <>
+              <Feather name="check-circle" size={24} color="white" />
+              <Text className="text-white font-bold text-lg ml-3">Finalizar Gestión</Text>
+            </>
           )}
         </TouchableOpacity>
       </ScrollView>
 
-      {/* MODAL PAUSA */}
+      {/* MODAL SUSPENSIÓN/PAUSA (BORRADORES) */}
       <Modal visible={showPauseModal} transparent animationType="fade">
         <View className="flex-1 bg-black/60 items-center justify-center px-6">
           <View className="bg-white w-full max-w-[320px] rounded-[40px] p-10 items-center shadow-2xl">
