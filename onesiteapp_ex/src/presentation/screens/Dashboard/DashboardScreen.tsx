@@ -250,7 +250,7 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
 
       {/* BOTÓN FLOTANTE MÓVIL PARA ENVÍOS EN SEGUNDO PLANO */}
       {capturasPendientes > 0 && (
-        <View className="absolute bottom-6 left-0 right-0 px-6 z-20">
+        <View className="absolute bottom-36 left-0 right-0 px-6 z-20">
           <TouchableOpacity
             onPress={handleManualSync}
             activeOpacity={0.85}

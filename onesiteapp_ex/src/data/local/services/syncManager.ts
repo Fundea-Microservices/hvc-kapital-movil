@@ -125,13 +125,16 @@ export const runFullSync = async () => {
         if (capturasNuevas.length === 0) return;
 
         const encuestasAgrupadas: Record<string, any[]> = {};
+
         capturasNuevas.forEach((cap: any) => {
+          const uuidCompleto = cap.uuid_instancia || '';
+          const uuidBase = uuidCompleto.split('_')[0];
           const uuid = cap.uuid_instancia;
-          if (!encuestasAgrupadas[uuid]) encuestasAgrupadas[uuid] = [];
-          encuestasAgrupadas[uuid].push(cap);
+          if (!encuestasAgrupadas[uuidBase]) encuestasAgrupadas[uuidBase] = [];
+          encuestasAgrupadas[uuidBase].push(cap);
         });
 
-        for (const [uuid, respuestas] of Object.entries(encuestasAgrupadas)) {
+        for (const [uuidBase, respuestas] of Object.entries(encuestasAgrupadas)) {
           // Extracción segura del estado de Zustand
           const authState = useAuthStore.getState() as any;
           const userIdRaw = authState.userId || authState.user?.id || authState.id;
@@ -198,7 +201,7 @@ export const runFullSync = async () => {
             }
           };
 
-          console.log(`🚀 [SYNC PUSH] Enviando payload para UUID ${uuid}:`, JSON.stringify(payload, null, 2));
+          console.log(`🚀 [SYNC PUSH] Enviando payload para UUID ${uuidBase}:`, JSON.stringify(payload, null, 2));
 
           try {
             // Agregamos 'config' como tercer parámetro para inyectar los Headers
@@ -206,7 +209,8 @@ export const runFullSync = async () => {
             
             await database.write(async () => {
               const capturaCollection = database.collections.get('local_captura');
-              const registrosActualizar = await capturaCollection.query(Q.where('uuid_instancia', uuid)).fetch();
+              const registrosActualizar = await capturaCollection.query(
+                Q.where('uuid_instancia', Q.like(`${uuidBase}%`))).fetch();
 
               const updates = registrosActualizar.map((registro: any) =>
                 registro.prepareUpdate((rec: any) => {
@@ -215,11 +219,11 @@ export const runFullSync = async () => {
               );
               await database.batch(...updates);
             });
-            console.log(`✅ [SYNC PUSH] Captura ${uuid} sincronizada con éxito.`);
+            console.log(`✅ [SYNC PUSH] Captura ${uuidBase} sincronizada con éxito.`);
           } catch (err: any) {
             const mensajeBackend = err.response?.data?.message || err.message;
-            console.error(`❌ [SYNC PUSH ERROR] Fallo al subir UUID ${uuid}. Detalle:`, mensajeBackend);
-            throw new Error(`Error sincronizando captura ${uuid}: ${mensajeBackend}`);
+            console.error(`❌ [SYNC PUSH ERROR] Fallo al subir UUID ${uuidBase}. Detalle:`, mensajeBackend);
+            throw new Error(`Error sincronizando captura ${uuidBase}: ${mensajeBackend}`);
           }
         }
       },
