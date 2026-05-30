@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, Platform, Alert, ActivityIndic
 import { Feather } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Location from 'expo-location';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface SurveyFieldProps {
   etiqueta: string;
@@ -23,6 +24,8 @@ export const SurveyField = ({
   const [isGpsLoading, setIsGpsLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+
+  const insets = useSafeAreaInsets();
 
   const containerClasses = esEditable
     ? (esObligatorio && !valor ? "border-red-500" : "border-blue-500")

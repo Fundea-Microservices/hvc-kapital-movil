@@ -12,8 +12,126 @@ let isSyncRunning = false;
 
 export const runFullSync = async () => {
   console.log('🔄 [SYNC] Iniciando sincronización...');
+
+  if (isSyncRunning) {
+    console.log('⚠️ [SYNC] Sincronización ya en curso. Ignorando petición.');
+    return;
+  }
   isSyncRunning = true; // Cerramos el candado
+
+
   try {
+    // ⚡ =======================================================================
+    // FASE 1: SUBIDA MANUAL DE ENCUESTAS (TOTALMENTE FUERA DEL PUSH NATIVO)
+    // =======================================================================
+    console.log('📤 [SYNC PUSH MANUAL] Buscando capturas locales pendientes...');
+    const capturaCollection = database.collections.get('local_captura');
+    
+    // Buscamos SOLO las que están pendientes (estado_sincro = 0)
+    const capturasPendientes = await capturaCollection.query(Q.where('estado_sincro', 0)).fetch();
+
+    if (capturasPendientes.length > 0) {
+      const encuestasAgrupadas: Record<string, any[]> = {};
+
+      capturasPendientes.forEach((cap: any) => {
+        // Obtenemos solo el UUID Base para agrupar TODA la encuesta
+        const uuidCompleto = cap.uuid_instancia || '';
+        const uuidBase = uuidCompleto.split('_')[0]; 
+
+        if (!encuestasAgrupadas[uuidBase]) encuestasAgrupadas[uuidBase] = [];
+        encuestasAgrupadas[uuidBase].push(cap);
+      });
+
+      for (const [uuidBase, respuestas] of Object.entries(encuestasAgrupadas)) {
+        const authState = useAuthStore.getState() as any;
+        const userIdRaw = authState.userId || authState.user?.id || authState.id;
+        
+        if (!userIdRaw) {
+          console.error("❌ CRÍTICO: No se encontró el ID del usuario en el estado global.");
+          throw new Error(`Falta el ID del usuario logueado en Zustand.`);
+        }
+
+        const userId = Number(userIdRaw); 
+        const idEncuesta = respuestas[0].id_encuesta;
+
+        // DEFENSIVO GEOLOCALIZACIÓN
+        const registroGps = respuestas.find(r => {
+          if (!r.valor || typeof r.valor !== 'string') return false;
+          const partes = r.valor.split(',');
+          if (partes.length !== 2) return false;
+          return !isNaN(parseFloat(partes[0])) && !isNaN(parseFloat(partes[1]));
+        });
+
+        let latitudEnvio = null;
+        let longitudEnvio = null;
+
+        if (registroGps && registroGps.valor) {
+          const partesGps = registroGps.valor.split(',');
+          if (partesGps.length === 2) {
+            latitudEnvio = parseFloat(partesGps[0].trim());
+            longitudEnvio = parseFloat(partesGps[1].trim());
+          }
+        }
+
+        const payload = {
+          idEncuesta: Number(idEncuesta),
+          IdUsuario: userId, 
+          idUsuario: userId,
+          latitud: latitudEnvio,
+          longitud: longitudEnvio,
+          fechaInicio: new Date().toISOString(),
+          fechaFin: new Date().toISOString(),
+          dispositivoId: 'ONE_SITE_SGRAS',
+          respuestas: respuestas.map(r => ({
+            idPregunta: Number(r.id_pregunta),
+            uuidInstancia: r.uuid_instancia,
+            valor: r.valor
+          }))
+        };
+
+        const config = {
+          headers: {
+            'x-user-id': userId.toString(),
+            'user-id': userId.toString(),
+            'idusuario': userId.toString(),
+            'IdUsuario': userId.toString(),
+            'X-User-Id': userId.toString(),
+          }
+        };
+
+        console.log(`🚀 [SYNC PUSH MANUAL] Enviando payload para UUID Base ${uuidBase}:`, JSON.stringify(payload, null, 2));
+
+        try {
+          await apiClient.post('/surveys/submit', payload, config);
+          
+          // ⚡ AHORA SÍ: Como estamos fuera del synchronize, WatermelonDB permite escribir sin problemas
+          await database.write(async () => {
+            const registrosActualizar = await capturaCollection.query(
+              Q.where('uuid_instancia', Q.like(`${uuidBase}%`)),
+              Q.where('estado_sincro', 0)
+            ).fetch();
+
+            const updates = registrosActualizar.map((registro: any) =>
+              registro.prepareUpdate((rec: any) => {
+                rec.estado_sincro = 1; // Marcado definitivo
+              })
+            );
+            await database.batch(...updates);
+          });
+          console.log(`✅ [SYNC PUSH MANUAL] Captura ${uuidBase} sincronizada y marcada con éxito.`);
+        } catch (err: any) {
+          const mensajeBackend = err.response?.data?.message || err.message;
+          console.error(`❌ [SYNC PUSH ERROR] Fallo al subir UUID ${uuidBase}. Detalle:`, mensajeBackend);
+          // Omitimos lanzar el throw para que intente subir las demás encuestas agrupadas si hay varias
+        }
+      }
+    } else {
+      console.log('✅ [SYNC PUSH MANUAL] No hay encuestas pendientes de envío.');
+    }
+
+    // ⚡ =======================================================================
+    // FASE 2: DESCARGA DE ESTRUCTURAS (PULL NATIVO DE WATERMELONDB)
+    // =======================================================================
     await synchronize({
       database,
       pullChanges: async ({ lastPulledAt }) => {
@@ -82,17 +200,11 @@ export const runFullSync = async () => {
                 regla_validacion: row.regla_validacion || row.reglaValidacion || null,
                 etiqueta: row.etiqueta || row.Etiqueta || 'Sin etiqueta',
                 tipo_dato: row.tipo_dato || row.tipoDato || 'TEXTO',
-                
-                //  Añadimos las columnas que faltaban en el contrato de mapeo
-                // Protegemos por si el backend lo envía con nomenclaturas distintas
                 opciones: row.opciones || row.Opciones || null,
                 origen_datos_tipo: row.origen_datos_tipo || row.origenDatosTipo || row.origen_datos_tipo || null,
                 origen_datos_cmd: row.origen_datos_cmd || row.origenDatosCmd || row.origen_datos_cmd || null,
-                
                 es_editable: (row.es_editable === 1 || row.esEditable === 1) ? 1 : 0,
                 es_visible_default: (row.es_visible_default === 1 || row.esVisibleDefault === 1) ? 1 : 0,
-                
-                // Limpiamos la precedencia lógica del operador condicional que estaba mezclado
                 es_obligatorio: (row.es_obligatorio === 1 || row.EsObligatorio === 1 || row.esObligatorio === 1) ? 1 : 0,
                 orden: row.orden || 1,
               };
@@ -119,125 +231,20 @@ export const runFullSync = async () => {
         };
       },
 
-      pushChanges: async ({ changes }) => {
-        console.log('📤 [SYNC PUSH] Detectando cambios locales...');
-        const capturasNuevas = (changes as any).local_captura?.created || [];
-        if (capturasNuevas.length === 0) return;
-
-        const encuestasAgrupadas: Record<string, any[]> = {};
-
-        capturasNuevas.forEach((cap: any) => {
-          const uuidCompleto = cap.uuid_instancia || '';
-          const uuidBase = uuidCompleto.split('_')[0];
-          const uuid = cap.uuid_instancia;
-          if (!encuestasAgrupadas[uuidBase]) encuestasAgrupadas[uuidBase] = [];
-          encuestasAgrupadas[uuidBase].push(cap);
-        });
-
-        for (const [uuidBase, respuestas] of Object.entries(encuestasAgrupadas)) {
-          // Extracción segura del estado de Zustand
-          const authState = useAuthStore.getState() as any;
-          const userIdRaw = authState.userId || authState.user?.id || authState.id;
-          
-          if (!userIdRaw) {
-            console.error("❌ CRÍTICO: No se encontró el ID del usuario en el estado global.");
-            throw new Error(`Falta el ID del usuario logueado en Zustand.`);
-          }
-
-          const userId = Number(userIdRaw); 
-          const idEncuesta = respuestas[0].id_encuesta;
-
-          // ⚡ FIX DEFENSIVO GEOLOCALIZACIÓN: 
-          // Buscamos una respuesta que tenga estrictamente la estructura "número, número"
-          // Esto evita que opciones de texto con comas (como "Ríos, lagos...") rompan el header numérico
-          const registroGps = respuestas.find(r => {
-            if (!r.valor || typeof r.valor !== 'string') return false;
-            const partes = r.valor.split(',');
-            if (partes.length !== 2) return false;
-            // Validamos que ambas partes sean números decimales válidos y no letras
-            return !isNaN(parseFloat(partes[0])) && !isNaN(parseFloat(partes[1]));
-          });
-
-          // Buscamos si dentro de las respuestas enviadas está la pregunta de coordenadas.
-          // Reemplazar 'ID_PREGUNTA_GPS' por el ID o TipoDato real de tu pregunta de geolocalización si aplica,
-          // o extraemos la ubicación directamente de los metadatos de la primera captura si tu schema la tiene ahí.
-          // const registroGps = respuestas.find(r => r.id_pregunta === 'id_pregunta_gps' || (r.valor && r.valor.includes(',')));
-          let latitudEnvio = null;
-          let longitudEnvio = null;
-
-          if (registroGps && registroGps.valor) {
-            const partesGps = registroGps.valor.split(',');
-            if (partesGps.length === 2) {
-              latitudEnvio = partesGps[0].trim();
-              longitudEnvio = partesGps[1].trim();
-            }
-          }
-
-          // Cuerpo del paquete JSON óptimo para el DTO
-          const payload = {
-            idEncuesta: Number(idEncuesta),
-            IdUsuario: userId, 
-            idUsuario: userId,
-            latitud: latitudEnvio,
-            longitud: longitudEnvio,
-            fechaInicio: new Date().toISOString(),
-            fechaFin: new Date().toISOString(),
-            dispositivoId:'ONE_SITE_SGRAS',
-            respuestas: respuestas.map(r => ({
-              idPregunta: Number(r.id_pregunta),
-              uuidInstancia: r.uuid_instancia,
-              valor: r.valor
-            }))
-          };
-
-          // Cabeceras HTTP obligatorias para los interceptores del backend
-          const config = {
-            headers: {
-              'x-user-id': userId.toString(),
-              'user-id': userId.toString(),
-              'idusuario': userId.toString(),
-              'IdUsuario': userId.toString(),
-              'X-User-Id': userId.toString(),
-            }
-          };
-
-          console.log(`🚀 [SYNC PUSH] Enviando payload para UUID ${uuidBase}:`, JSON.stringify(payload, null, 2));
-
-          try {
-            // Agregamos 'config' como tercer parámetro para inyectar los Headers
-            await apiClient.post('/surveys/submit', payload, config);
-            
-            await database.write(async () => {
-              const capturaCollection = database.collections.get('local_captura');
-              const registrosActualizar = await capturaCollection.query(
-                Q.where('uuid_instancia', Q.like(`${uuidBase}%`))).fetch();
-
-              const updates = registrosActualizar.map((registro: any) =>
-                registro.prepareUpdate((rec: any) => {
-                  rec.estado_sincro = 1;
-                })
-              );
-              await database.batch(...updates);
-            });
-            console.log(`✅ [SYNC PUSH] Captura ${uuidBase} sincronizada con éxito.`);
-          } catch (err: any) {
-            const mensajeBackend = err.response?.data?.message || err.message;
-            console.error(`❌ [SYNC PUSH ERROR] Fallo al subir UUID ${uuidBase}. Detalle:`, mensajeBackend);
-            throw new Error(`Error sincronizando captura ${uuidBase}: ${mensajeBackend}`);
-          }
-        }
+      // ⚡ FIX CLAVE: Se deja el pushChanges nativo VACÍO para evitar colisiones
+      pushChanges: async () => {
+         // Ya hicimos el push manual en la Fase 1. Dejamos esto vacío para no bloquear WatermelonDB.
       },
     });
     
     console.log("✅ Sincronización base exitosa");
 
     // ========================================================================
-    // INTERCEPCIÓN DE INGENIERÍA: DESCARGA AUTOMÁTICA DE CATÁLOGOS
+    // 3. DESCARGA AUTOMÁTICA DE CATÁLOGOS
     // ========================================================================
     const token = useAuthStore.getState().token;
     if (token) {
       console.log('📥 [SYNC] Iniciando descarga automática de catálogos maestros...');
-      // El sistema ejecuta la descarga pasándole la instancia global de la base de datos
       await sincronizarCatalogos(database, token);
     }
 
@@ -246,7 +253,6 @@ export const runFullSync = async () => {
     throw error;
   }
   finally {
-    //Abrimos el candado termine bien o mal
     isSyncRunning = false; 
   }
 };

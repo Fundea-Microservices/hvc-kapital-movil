@@ -250,14 +250,19 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
 
       {/* BOTÓN FLOTANTE MÓVIL PARA ENVÍOS EN SEGUNDO PLANO */}
       {capturasPendientes > 0 && (
-        <View className="absolute bottom-36 left-0 right-0 px-6 z-20">
+        <View
+          style={{ bottom: insets.bottom + 16 }} // En un dispositivo moderno se elevará lo justo para no tapar los gestos
+          className="absolute left-0 right-0 px-6 z-20"
+        >
           <TouchableOpacity
             onPress={handleManualSync}
             activeOpacity={0.85}
             className="bg-[#D97706] p-4 rounded-2xl flex-row justify-center items-center shadow-lg border border-amber-600"
           >
             <Feather name="upload-cloud" size={20} color="white" />
-            <Text className="text-white font-bold ml-3 text-base">Sincronizar Pendientes ({capturasPendientes})</Text>
+            <Text className="text-white font-bold ml-3 text-base">
+              Sincronizar Pendientes ({capturasPendientes})
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -338,12 +343,12 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
               </TouchableOpacity>
             </ScrollView>
 
-            <View 
-            style={{ 
-          paddingBottom: Math.max(insets.bottom, 24), // Si es 0 (pantalla vieja), asegura un mínimo de 24px
-          paddingHorizontal: 16 
-        }}
-            className="pt-4 border-t border-gray-100">
+            <View
+              style={{
+                paddingBottom: Math.max(insets.bottom, 24), // Si es 0 (pantalla vieja), asegura un mínimo de 24px
+                paddingHorizontal: 16
+              }}
+              className="pt-4 border-t border-gray-100">
               <TouchableOpacity
                 className="flex-row items-center p-4 bg-red-50 rounded-xl active:bg-red-100 justify-center"
                 onPress={() => {
