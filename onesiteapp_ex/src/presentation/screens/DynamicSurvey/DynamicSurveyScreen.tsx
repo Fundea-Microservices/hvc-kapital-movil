@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator, BackHandler, findNodeHandle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import withObservables from '@nozbe/with-observables';
@@ -15,9 +15,10 @@ import { CatalogoOpcion } from '../../../data/local/models/CatalogoOpcion';
 import { SurveyField } from '../../components/Surveys/SurveyField';
 import { evaluate } from 'mathjs';
 import { useNavigation } from '@react-navigation/native';
+import LocalClientePendiente from '../../../data/local/models/LocalClientePendiente';
 
 interface Props {
-  route: any; // ⚡ INYECTADO: Para leer los parámetros de navegación de forma directa y segura
+  route: any; 
   encuesta: LocalEncuesta | null;
   preguntas: LocalEstructuraPregunta[];
   secciones: LocalSeccion[];
@@ -32,14 +33,25 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   const [respuestas, setRespuestas] = useState<Record<string, string>>({});
   const [instanciasMatriz, setInstanciasMatriz] = useState<Record<string, string[]>>({});
   const [seccionExpandidaId, setSeccionExpandidaId] = useState<string | null>(null);
+  
+  const scrollViewRef = useRef<ScrollView>(null);
+  const sectionRefs = useRef<Record<string, View | null>>({});
+  const puedeSalir = useRef(false);
+
+  // Se sustituye el useState por un useRef para almacenar las coordenadas "Y" de forma silenciosa
+  const seccionLayoutsRef = useRef<Record<string, number>>({});
 
   // Extraído del router para evitar colapsos si el modelo 'encuesta' está en la fase de carga
   const idEncuestaSeguro = route?.params?.idEncuesta || '';
+  
+  // Se declara y extrae formalmente la variable del token del cliente
+  const uuidInstanciaBase = route?.params?.uuidInstanciaBase || '';
+  const instanciaEncuestaUuid = uuidInstanciaBase || uuid.v4().toString();
 
   // --- MOTOR DE RESTAURACIÓN DE BORRADORES ---
   useEffect(() => {
     if (capturasExistentes && capturasExistentes.length > 0) {
-      console.log(`📦 [BORRADOR]: Restaurando ${capturasExistentes.length} respuestas previas...`);
+      console.log(`[RESTAURACIÓN]: Cargando respuestas previas de este cliente específico...`);
       const mapaRespuestas: Record<string, string> = {};
       const mapaMatrices: Record<string, string[]> = {};
 
@@ -71,29 +83,42 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     }
   }, [capturasExistentes]);
 
-  // --- DIAGNÓSTICO PROFUNDO EN CONSOLA ---
+  // VALIDADOR REACTIVO DE CAMPOS VACÍOS
+  const tieneDatosLlenos = () => {
+    return Object.values(respuestas).some(val => val && val.toString().trim() !== '');
+  };
+
+  // INTERCEPTOR DE SALIDA PARA REACT NAVIGATION
   useEffect(() => {
-    console.log("=== 🔍 RASTREO DE PREGUNTAS TIPO SELECT/RADIO ===");
+    const interceptarSalida = navigation.addListener('beforeRemove', (e: any) => {
+      if (puedeSalir.current) return;
 
-    const preguntasCombo = preguntas.filter(p =>
-      p.tipo_dato?.toUpperCase() === 'SELECT' ||
-      p.tipo_dato?.toUpperCase() === 'RADIO'
-    );
+      if (!tieneDatosLlenos()) {
+        puedeSalir.current = true;
+        navigation.dispatch(e.data.action);
+        return;
+      }
+      e.preventDefault();
+      setShowPauseModal(true);
+    });
+    return interceptarSalida;
+  }, [navigation, respuestas]);
 
-    if (preguntasCombo.length > 0) {
-      preguntasCombo.forEach((p, index) => {
-        console.log(`[Combo #${index + 1}] Etiqueta: "${p.etiqueta}"`);
-        console.log(`-> opciones (columna):`, (p._raw as any).opciones);
-        console.log(`-> origen_datos_cmd (columna):`, (p._raw as any).origen_datos_cmd);
-        console.log("-----------------------------------------");
-      });
-    } else {
-      console.log("⚠️ Alerta: No se encontraron preguntas de tipo SELECT o RADIO en esta encuesta.");
-    }
-    console.log("=================================================");
-  }, [preguntas]);
+  // INTERCEPTOR CORREGIDO PARA BOTÓN FISICO (ANDROID)
+  useEffect(() => {
+    const backAction = () => {
+      if (!tieneDatosLlenos()) {
+        puedeSalir.current = true;
+        navigation.goBack();
+        return true;
+      }
+      setShowPauseModal(true);
+      return true; 
+    };
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => backHandler.remove();
+  }, [navigation, respuestas]);
 
-  // --- MOTOR DE MATRICES ---
   const añadirFilaMatriz = (idPadre: string) => {
     const nuevoUuid = uuid.v4().toString();
     setInstanciasMatriz(prev => ({ ...prev, [idPadre]: [...(prev[idPadre] || []), nuevoUuid] }));
@@ -103,37 +128,67 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     setInstanciasMatriz(prev => ({ ...prev, [idPadre]: prev[idPadre].filter(id => id !== uuidEliminar) }));
   };
 
-  // MOTOR UNIFICADO DE REGLAS DE VISIBILIDAD REACTIVAS
   const isQuestionVisible = (p: LocalEstructuraPregunta) => {
     if (!p.regla_visibilidad) return true;
     try {
       const reglaStr = p.regla_visibilidad.toString().trim();
-
-      // Formato A: Regla configurada en JSON estructurado
       if (reglaStr.startsWith('{')) {
         const regla = JSON.parse(reglaStr);
         return respuestas[regla.dependeDe] === regla.valorEsperado;
       }
-
-      // Formato B: Regla de coincidencia directa (Ej: "IdPregunta == 'SI'")
       const matches = reglaStr.match(/(\w+)\s*(==|===|=)\s*['"]([^'"]+)['"]/);
       if (matches) {
         const [_, idPreguntaDependiente, __, valorEsperado] = matches;
         const respuestaActual = respuestas[idPreguntaDependiente] || '';
         return respuestaActual.toString().toLowerCase() === valorEsperado.toLowerCase();
       }
-
-      // Formato C: Expresiones complejas evaluadas de forma segura
       let reglaEvaluada = reglaStr;
       Object.keys(respuestas).forEach(key => {
         const val = respuestas[key] ? `'${respuestas[key]}'` : "''";
         reglaEvaluada = reglaEvaluada.replace(new RegExp(key, 'g'), val);
       });
-
       return Function(`"use strict"; return (${reglaEvaluada})`)();
     } catch (e) {
-      return true; // En caso de error de sintaxis, se muestra defensivamente
+      return true;
     }
+  };
+
+  const getSeccionStatusColor = (idSeccion: string) => {
+    const pregSeccion = preguntas.filter(p => p.id_seccion === idSeccion && (!p.id_matriz_padre || p.id_matriz_padre === 'null'));
+    if (pregSeccion.length === 0) return 'bg-gray-200'; 
+    let totalObligatorias = 0;
+    let obligatoriasLlenas = 0;
+    let algunaRespondida = false;
+
+    pregSeccion.forEach(p => {
+        if (!isQuestionVisible(p)) return; 
+        if (p.tipo_dato?.toUpperCase() === 'MATRIZ') {
+            const hijas = preguntas.filter(h => h.id_matriz_padre === p.id);
+            const filas = instanciasMatriz[p.id] || [];
+            if (filas.length > 0) algunaRespondida = true;
+            filas.forEach(uuidFila => {
+                hijas.forEach(hija => {
+                    const val = respuestas[`${hija.id}_${uuidFila}`];
+                    const lleno = val && val.trim() !== '';
+                    if (hija.es_obligatorio === 1) {
+                        totalObligatorias++;
+                        if (lleno) obligatoriasLlenas++;
+                    } else if (lleno) algunaRespondida = true;
+                });
+            });
+        } else {
+            const val = respuestas[p.id];
+            const lleno = val && val.trim() !== '';
+            if (lleno) algunaRespondida = true;
+            if (p.es_obligatorio === 1) {
+                totalObligatorias++;
+                if (lleno) obligatoriasLlenas++;
+            }
+        }
+    });
+    if (totalObligatorias > 0 && obligatoriasLlenas === totalObligatorias) return 'bg-[#10B981]'; 
+    if (algunaRespondida || obligatoriasLlenas > 0) return 'bg-[#F59E0B]'; 
+    return 'bg-gray-200'; 
   };
 
   const handleRespuestaChange = (idPregunta: string, valor: string) => {
@@ -144,7 +199,6 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     while (huboCambios && iteraciones < 5) {
       huboCambios = false;
       iteraciones++;
-
       preguntas
         .filter(p => p.tipo_dato === 'CALCULO' && p.sintaxis_calculo)
         .forEach(p => {
@@ -184,24 +238,11 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   const handlePausarFormulario = async () => {
     setIsSaving(true);
     try {
-      let instanciaEncuestaUuid = uuid.v4().toString();
-
-      if (capturasExistentes && capturasExistentes.length > 0) {
-        const primerBorrador = capturasExistentes[0];
-        if (primerBorrador && primerBorrador._raw) {
-          const datosCrudos = primerBorrador._raw as any;
-          if (datosCrudos && datosCrudos.uuid_instancia) {
-            instanciaEncuestaUuid = datosCrudos.uuid_instancia.split('_')[0];
-          }
-        }
-      }
-
       await database.write(async () => {
         const capturaCollection = database.collections.get<LocalCaptura>('local_captura');
-
         const borradoresPrevios = await capturaCollection.query(
           Q.where('id_encuesta', idEncuestaSeguro),
-          Q.where('estado_sincro', -1)
+          Q.where('uuid_instancia', Q.like(`${instanciaEncuestaUuid}%`))
         ).fetch();
         const registrosABorrar = borradoresPrevios.map(r => r.prepareDestroyPermanently());
 
@@ -221,13 +262,47 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
             });
           });
 
-        await database.batch(registrosABorrar.concat(batchCreate));
+        //Integra la encuesta nueva en la lista de la agenda
+        const clientePendienteCollection = database.collections.get<LocalClientePendiente>('local_cliente_pendiente');
+        const existeCliente = await clientePendienteCollection.query(
+          Q.where('id_cliente', instanciaEncuestaUuid)
+        ).fetch();
+
+        // El sistema extrae dinámicamente el valor que el asesor escribió en el input de nombre completo
+        let nombreDetectado = 'NUEVA ENCUESTA';
+        const preguntaNombre = preguntas.find(p => 
+          p.etiqueta?.toLowerCase().includes('nombre completo') ||
+          p.etiqueta?.toLowerCase().includes('nombre')
+        );
+        if (preguntaNombre && respuestas[preguntaNombre.id]) {
+          nombreDetectado = respuestas[preguntaNombre.id].trim();
+        }
+
+        if (existeCliente.length === 0) {
+          // Si el registro no existe, se genera una nueva tarjeta en la lista de pendientes
+          const nuevoClienteAsignado = clientePendienteCollection.prepareCreate((record) => {
+            record.id_cliente = instanciaEncuestaUuid;
+            record.nombre = nombreDetectado;
+            record.codigo = 'AD-HOC';
+            record.id_encuesta = idEncuestaSeguro;
+            record.estado_gestion = 0; // Se mantiene en 0 para que sea visible en la agenda
+            record.motivo_rechazo = null;
+          });
+          await database.batch([...registrosABorrar, ...batchCreate, nuevoClienteAsignado] as any[]);
+        } else {
+          // Si ya existía la tarjeta, se actualiza el nombre en caliente por si fue modificado
+          const clienteExistente = existeCliente[0];
+          const clienteActualizado = clienteExistente.prepareUpdate((record) => {
+            record.nombre = nombreDetectado;
+          });
+          await database.batch([...registrosABorrar, ...batchCreate, clienteActualizado] as any[]);
+        }
       });
 
+      puedeSalir.current = true;
       setShowPauseModal(false);
       navigation.goBack();
     } catch (error) {
-      console.error("❌ Error crítico en operación de pausa:", error);
       Alert.alert("Error", "No se pudo suspender la encuesta de forma segura.");
     } finally {
       setIsSaving(false);
@@ -237,14 +312,11 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   const handleFinalizarFormulario = async () => {
     setIsSaving(true);
     try {
-      const instanciaEncuestaUuid = uuid.v4().toString();
-
       await database.write(async () => {
         const capturaCollection = database.collections.get<LocalCaptura>('local_captura');
-
         const borradoresPrevios = await capturaCollection.query(
           Q.where('id_encuesta', idEncuestaSeguro),
-          Q.where('estado_sincro', -1)
+          Q.where('uuid_instancia', Q.like(`${instanciaEncuestaUuid}%`))
         ).fetch();
         const registrosABorrar = borradoresPrevios.map(r => r.prepareDestroyPermanently());
 
@@ -264,10 +336,38 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
             });
           });
 
-        await database.batch(registrosABorrar.concat(batchCreate));
+        // Al finalizar, el registro debe cambiar a estado 1 para desaparecer de la lista de pendientes
+        const clientePendienteCollection = database.collections.get<LocalClientePendiente>('local_cliente_pendiente');
+        const existeCliente = await clientePendienteCollection.query(
+          Q.where('id_cliente', instanciaEncuestaUuid)
+        ).fetch();
+
+        let nombreDetectado = 'NUEVA ENCUESTA';
+        const preguntaNombre = preguntas.find(p => p.etiqueta?.toLowerCase().includes('nombre'));
+        if (preguntaNombre && respuestas[preguntaNombre.id]) {
+          nombreDetectado = respuestas[preguntaNombre.id].trim();
+        }
+
+        if (existeCliente.length > 0) {
+          const clienteFinalizado = existeCliente[0].prepareUpdate((record) => {
+            record.estado_gestion = 1; // Cambia a completado
+          });
+          await database.batch([...registrosABorrar, ...batchCreate, clienteFinalizado] as any[]);
+        } else {
+          const nuevoClienteFinalizado = clientePendienteCollection.prepareCreate((record) => {
+            record.id_cliente = instanciaEncuestaUuid;
+            record.nombre = nombreDetectado;
+            record.codigo = 'AD-HOC';
+            record.id_encuesta = idEncuestaSeguro;
+            record.estado_gestion = 1; 
+            record.motivo_rechazo = null;
+          });
+          await database.batch([...registrosABorrar, ...batchCreate, nuevoClienteFinalizado] as any[]);
+        }
       });
 
-      Alert.alert("¡Éxito!", "Gestión completada y lista para enviar.", [{ text: "Finalizar", onPress: () => navigation.goBack() }]);
+      puedeSalir.current = true;
+      Alert.alert("¡Éxito!", "Gestión completada.", [{ text: "Finalizar", onPress: () => navigation.goBack() }]);
     } catch (error) {
       Alert.alert("Error", "No se pudo guardar la captura final.");
     } finally {
@@ -277,110 +377,74 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
 
   const obtenerOpciones = (opcionesString: string | null): string => {
     if (!opcionesString) return '';
-
-    const strBuscar = opcionesString.toString().trim();
-    const tokenLimpio = strBuscar.replace('CAT_', '').toLowerCase();
-
+    const strBuscar = opcionesString.toString().trim().toLowerCase().replace('cat_', '');
     const items = catalogos
       .filter(c => {
         const rawCat = c._raw as any;
-        const nombreCatBD = (rawCat.nombre_catalogo || '').toString().trim().toLowerCase();
-        const codigoCatBD = (rawCat.codigo_catalogo || '').toString().trim().toLowerCase();
-
-        return nombreCatBD === tokenLimpio ||
-          nombreCatBD === strBuscar.toLowerCase() ||
-          codigoCatBD === tokenLimpio ||
-          codigoCatBD === strBuscar.toLowerCase();
+        return (rawCat.nombre_catalogo || '').toString().trim().toLowerCase() === strBuscar ||
+               (rawCat.codigo_catalogo || '').toString().trim().toLowerCase() === strBuscar;
       })
       .map(c => (c._raw as any).valor_opcion as string);
-
     return items.length > 0 ? JSON.stringify(items) : '';
   };
 
   return (
    <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
-      {/* HEADER CORPORATIVO */}
       <View className="flex-row items-center justify-between px-4 py-4 bg-white border-b border-gray-200">
         <TouchableOpacity onPress={() => setShowPauseModal(true)}>
           <Feather name="arrow-left" size={24} color="#374151" />
         </TouchableOpacity>
         <View className="flex-1 ml-3">
-          <Text className="text-[#1E3A8A] font-bold text-lg">
-            {encuesta ? encuesta.nombre.toUpperCase() : 'CARGANDO FORMULARIO...'}
-          </Text>
-          <Text className="text-gray-500 text-xs">Formulario Inteligente Offline</Text>
+          <Text className="text-[#1E3A8A] font-bold text-lg">{encuesta ? encuesta.nombre.toUpperCase() : 'CARGANDO...'}</Text>
         </View>
       </View>
 
-      {/* CONTENEDOR DE SECCIONES EN ACORDEÓN */}
-      <ScrollView 
-        className="flex-1 p-4" 
-        keyboardShouldPersistTaps="handled" 
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100 }} 
-      >
+      <ScrollView className="flex-1 p-4" ref={scrollViewRef} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
         {secciones.map((seccion) => {
-          // Validación reactiva: ¿Esta sección es la que debe estar abierta?
           const estaAbierta = seccionExpandidaId === seccion.id;
-
-          // Filtramos las preguntas raíz que pertenecen únicamente a esta sección
-          const preguntasRaiz = preguntas.filter(p =>
-            p.id_seccion === seccion.id && (!p.id_matriz_padre || p.id_matriz_padre === 'null')
-          );
-
-          // Si la sección no tiene preguntas asignadas por base de datos, la omitimos defensivamente
+          const preguntasRaiz = preguntas.filter(p => p.id_seccion === seccion.id && (!p.id_matriz_padre || p.id_matriz_padre === 'null'));
           if (preguntasRaiz.length === 0) return null;
 
           return (
-            <View 
-              key={seccion.id} 
+            <View key={seccion.id} ref={el => { sectionRefs.current[seccion.id] = el; }}
+              onLayout={(e) => {
+                //Se escribe en la referencia en lugar del estado para no disparar ciclos prematuros
+                seccionLayoutsRef.current[seccion.id] = e.nativeEvent.layout.y;
+              }}
               className="mb-3 bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100"
             >
-              {/* 🔘 ENCABEZADO DEL ACORDEÓN (BOTÓN DE CONTROL) */}
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => {
-                  // Si das tap a la que ya está abierta se cierra, si no se abre y cierra el resto
-                  setSeccionExpandidaId(estaAbierta ? null : seccion.id);
+                  const nuevaAbierta = estaAbierta ? null : seccion.id;
+                  setSeccionExpandidaId(nuevaAbierta);
+                  if (nuevaAbierta) {
+                    setTimeout(() => {
+                      // Desplazamiento basado en la referencia estable en memoria
+                      const posicionY = seccionLayoutsRef.current[nuevaAbierta];
+                      if (posicionY !== undefined) {
+                        scrollViewRef.current?.scrollTo({ y: posicionY - 10, animated: true });
+                      }
+                    }, 280);
+                  }
                 }}
-                className={`flex-row items-center justify-between p-5 ${
-                  estaAbierta ? 'bg-blue-50/40' : 'bg-white'
-                }`}
+                className={`flex-row items-center justify-between p-5 ${estaAbierta ? 'bg-blue-50/40' : 'bg-white'}`}
               >
                 <View className="flex-row items-center flex-1 pr-4">
-                  {/* Indicador de número/orden redondo */}
-                  <View className={`w-8 h-8 rounded-full items-center justify-center mr-3 ${
-                    estaAbierta ? 'bg-[#1E3A8A]' : 'bg-gray-100'
-                  }`}>
-                    <Text className={`font-black text-xs ${estaAbierta ? 'text-white' : 'text-gray-500'}`}>
-                      {seccion.orden || '#'}
-                    </Text>
+                  <View className={`w-3 h-3 rounded-full mr-3 ${getSeccionStatusColor(seccion.id)}`} />
+                  <View className={`w-8 h-8 rounded-full items-center justify-center mr-3 ${estaAbierta ? 'bg-[#1E3A8A]' : 'bg-gray-100'}`}>
+                    <Text className={`font-black text-xs ${estaAbierta ? 'text-white' : 'text-gray-500'}`}>{seccion.orden || '#'}</Text>
                   </View>
-                  
-                  {/* Título de la sección */}
-                  <Text className={`font-bold text-base flex-1 ${
-                    estaAbierta ? 'text-[#1E3A8A]' : 'text-gray-700'
-                  }`}>
-                    {seccion.nombre || 'Sección informativa'}
-                  </Text>
+                  <Text className={`font-bold text-base flex-1 ${estaAbierta ? 'text-[#1E3A8A]' : 'text-gray-700'}`}>{seccion.nombre || 'Sección'}</Text>
                 </View>
-
-                {/* Icono dinámico de flecha */}
-                <Feather 
-                  name={estaAbierta ? "chevron-up" : "chevron-down"} 
-                  size={20} 
-                  color={estaAbierta ? "#1E3A8A" : "#9CA3AF"} 
-                />
+                <Feather name={estaAbierta ? "chevron-up" : "chevron-down"} size={20} color={estaAbierta ? "#1E3A8A" : "#9CA3AF"} />
               </TouchableOpacity>
 
-              {/* 📝 CUERPO DEL ACORDEÓN (PREGUNTAS DINÁMICAS) */}
               {estaAbierta && (
                 <View className="p-5 border-t border-gray-50 gap-y-5 bg-white">
                   {preguntasRaiz.map((p) => {
-                    // Validamos reglas de visibilidad reactivas en segundo plano
                     if (!isQuestionVisible(p)) return null;
 
-                    // CASO A: LA PREGUNTA ES UNA MATRIZ DINÁMICA (Estructura Multiregistro)
                     if (p.tipo_dato?.toUpperCase() === 'MATRIZ') {
                       const preguntasHijas = preguntas.filter(hija => hija.id_matriz_padre === p.id);
                       const filas = instanciasMatriz[p.id] || [];
@@ -389,10 +453,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                         <View key={p.id} className="mb-2 bg-blue-50/60 p-4 rounded-[32px] border border-blue-100">
                           <View className="flex-row justify-between items-center mb-4 px-2">
                             <Text className="font-bold text-[#1E3A8A] flex-1 mr-2">{p.etiqueta}</Text>
-                            <TouchableOpacity 
-                              onPress={() => añadirFilaMatriz(p.id)} 
-                              className="bg-[#1E3A8A] px-4 py-2 rounded-full flex-row items-center shadow-sm"
-                            >
+                            <TouchableOpacity onPress={() => añadirFilaMatriz(p.id)} className="bg-[#1E3A8A] px-4 py-2 rounded-full flex-row items-center shadow-sm">
                               <Feather name="plus" size={16} color="white" />
                               <Text className="text-white font-bold ml-1 text-xs">Añadir</Text>
                             </TouchableOpacity>
@@ -427,7 +488,6 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                       );
                     }
 
-                    // CASO B: PREGUNTA ESTÁNDAR COMPUESTA (Texto, Select, Radio, GPS, etc.)
                     return (
                       <View key={p.id} className="mb-2">
                         <SurveyField
@@ -438,7 +498,19 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                           valor={respuestas[p.id] || ''}
                           opciones={obtenerOpciones(p.opciones || (p._raw as any).origen_datos_cmd)}
                           onChangeText={(txt) => handleRespuestaChange(p.id, txt)}
-                          onBlur={() => { }}
+                          reglaValidacion={p.regla_validacion}
+                          onBlur={() => {
+                            if (p.regla_validacion && respuestas[p.id]) {
+                              try {
+                                const regex = new RegExp(p.regla_validacion);
+                                if (!regex.test(respuestas[p.id])) {
+                                  Alert.alert("Formato Inválido", `El dato en "${p.etiqueta}" no cumple con el formato corporativo.`);
+                                }
+                              } catch(e) {
+                                console.log("Error en expresión regular:", e);
+                              }
+                            }
+                          }}
                           mensajeInfo={p.tipo_dato === 'CALCULO' ? "Calculado automáticamente" : undefined}
                         />
                       </View>
@@ -450,7 +522,6 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
           );
         })}
 
-        {/* BOTÓN EMISOR DE FINALIZACIÓN GESTIÓN */}
         <TouchableOpacity
           className={`p-5 rounded-[22px] flex-row justify-center items-center mt-6 mb-16 shadow-lg ${isSaving ? 'bg-gray-400' : 'bg-[#059669]'}`}
           onPress={handleFinalizarFormulario}
@@ -465,7 +536,6 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         </TouchableOpacity>
       </ScrollView>
 
-      {/* MODAL SUSPENSIÓN/PAUSA (BORRADORES) */}
       <Modal visible={showPauseModal} transparent animationType="fade">
         <View className="flex-1 bg-black/60 items-center justify-center px-6">
           <View className="bg-white w-full max-w-[320px] rounded-[40px] p-10 items-center shadow-2xl">
@@ -491,6 +561,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
 
 const enhance = withObservables(['route'], ({ route }: any) => {
   const idEncuesta = route?.params?.idEncuesta || null;
+  const uuidInstanciaBase = route?.params?.uuidInstanciaBase || '';
 
   return {
     encuesta: idEncuesta ? database.collections.get<LocalEncuesta>('local_encuesta').findAndObserve(idEncuesta) : null,
@@ -499,6 +570,7 @@ const enhance = withObservables(['route'], ({ route }: any) => {
     catalogos: database.collections.get<CatalogoOpcion>('local_catalogo_opciones').query(),
     capturasExistentes: database.collections.get<LocalCaptura>('local_captura').query(
       Q.where('id_encuesta', idEncuesta !== null ? idEncuesta : ''),
+      Q.where('uuid_instancia', Q.like(`${uuidInstanciaBase}%`)),
       Q.where('estado_sincro', -1)
     ),
   };

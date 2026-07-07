@@ -14,11 +14,12 @@ interface SurveyFieldProps {
   opciones?: string;
   mensajeInfo?: string;
   onChangeText: (text: string) => void;
+  reglaValidacion?: string | null;
   onBlur: () => void;
 }
 
 export const SurveyField = ({
-  etiqueta, tipoDato, esObligatorio, esEditable, valor, opciones, onChangeText, mensajeInfo, onBlur
+  etiqueta, tipoDato, esObligatorio, esEditable, valor, opciones, onChangeText, reglaValidacion, mensajeInfo, onBlur
 }: SurveyFieldProps) => {
 
   const [isGpsLoading, setIsGpsLoading] = useState(false);
@@ -314,7 +315,19 @@ if (location && location.coords) {
         // Leemos el string guardado de forma segura, evitando romper opciones que tienen comas usando un separador fuerte (|)
         // Para compatibilidad hacia atrás, si el valor contiene "||", lo separamos por "||". Si no, asumimos que está separado por comas (comportamiento antiguo)
         const separador = valor && valor.includes('||') ? '||' : ',';
-        const opcionesSeleccionadas = valor ? valor.split(separador).map(v => v.trim()).filter(v => v.length > 0) : [];
+        //const opcionesSeleccionadas = valor ? valor.split(separador).map(v => v.trim()).filter(v => v.length > 0) : [];
+
+        let opcionesSeleccionadas: string[] = [];
+        if (valor) {
+          if (valor.includes('||')) {
+            opcionesSeleccionadas = valor.split('||').map(v => v.trim()).filter(Boolean);
+          } else if (listaOpciones.includes(valor.trim())) {
+            // Si la opción tiene coma pero coincide exactamente con el catálogo, no la dividimos
+            opcionesSeleccionadas = [valor.trim()];
+          } else {
+            opcionesSeleccionadas = valor.split(',').map(v => v.trim()).filter(Boolean);
+          }
+        }
 
         const toggleOpcionMulti = (opcionRaw: string) => {
           const optLimpia = opcionRaw.trim();

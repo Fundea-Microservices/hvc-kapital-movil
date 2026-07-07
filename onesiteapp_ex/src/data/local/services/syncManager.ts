@@ -1,6 +1,6 @@
 import { synchronize } from '@nozbe/watermelondb/sync';
 import { database } from '../database';
-import { apiClient } from '../../../core/network/apiClient';
+import { apiClient, apiClientCatalogos } from '../../../core/network/apiClient';
 import { Database, Q } from '@nozbe/watermelondb';
 import { useAuthStore } from '../../../presentation/store/useAuthStore';
 import axios from 'axios';
@@ -11,20 +11,20 @@ import axios from 'axios';
 let isSyncRunning = false;
 
 export const runFullSync = async () => {
-  console.log('🔄 [SYNC] Iniciando sincronización...');
+  console.log(' [SYNC] Iniciando sincronización...');
 
   if (isSyncRunning) {
-    console.log('⚠️ [SYNC] Sincronización ya en curso. Ignorando petición.');
+    console.log(' [SYNC] Sincronización ya en curso. Ignorando petición.');
     return;
   }
   isSyncRunning = true; // Cerramos el candado
 
 
   try {
-    // ⚡ =======================================================================
+    // =======================================================================
     // FASE 1: SUBIDA MANUAL DE ENCUESTAS (TOTALMENTE FUERA DEL PUSH NATIVO)
     // =======================================================================
-    console.log('📤 [SYNC PUSH MANUAL] Buscando capturas locales pendientes...');
+    console.log(' [SYNC PUSH MANUAL] Buscando capturas locales pendientes...');
     const capturaCollection = database.collections.get('local_captura');
     
     // Buscamos SOLO las que están pendientes (estado_sincro = 0)
@@ -99,12 +99,12 @@ export const runFullSync = async () => {
           }
         };
 
-        console.log(`🚀 [SYNC PUSH MANUAL] Enviando payload para UUID Base ${uuidBase}:`, JSON.stringify(payload, null, 2));
+        console.log(` [SYNC PUSH MANUAL] Enviando payload para UUID Base ${uuidBase}:`, JSON.stringify(payload, null, 2));
 
         try {
           await apiClient.post('/surveys/submit', payload, config);
           
-          // ⚡ AHORA SÍ: Como estamos fuera del synchronize, WatermelonDB permite escribir sin problemas
+          // AHORA SÍ: Como estamos fuera del synchronize, WatermelonDB permite escribir sin problemas
           await database.write(async () => {
             const registrosActualizar = await capturaCollection.query(
               Q.where('uuid_instancia', Q.like(`${uuidBase}%`)),
@@ -118,7 +118,7 @@ export const runFullSync = async () => {
             );
             await database.batch(...updates);
           });
-          console.log(`✅ [SYNC PUSH MANUAL] Captura ${uuidBase} sincronizada y marcada con éxito.`);
+          console.log(`[SYNC PUSH MANUAL] Captura ${uuidBase} sincronizada y marcada con éxito.`);
         } catch (err: any) {
           const mensajeBackend = err.response?.data?.message || err.message;
           console.error(`❌ [SYNC PUSH ERROR] Fallo al subir UUID ${uuidBase}. Detalle:`, mensajeBackend);
@@ -126,16 +126,16 @@ export const runFullSync = async () => {
         }
       }
     } else {
-      console.log('✅ [SYNC PUSH MANUAL] No hay encuestas pendientes de envío.');
+      console.log('[SYNC PUSH MANUAL] No hay encuestas pendientes de envío.');
     }
 
-    // ⚡ =======================================================================
+    // =======================================================================
     // FASE 2: DESCARGA DE ESTRUCTURAS (PULL NATIVO DE WATERMELONDB)
     // =======================================================================
     await synchronize({
       database,
       pullChanges: async ({ lastPulledAt }) => {
-        console.log('📥 [SYNC PULL] Obteniendo cambios del servidor...');
+        console.log('[SYNC PULL] Obteniendo cambios del servidor...');
         const syncDate = lastPulledAt ? new Date(lastPulledAt).toISOString() : null;
 
         const [coreRes, structureRes, catalogsRes] = await Promise.all([
@@ -231,20 +231,20 @@ export const runFullSync = async () => {
         };
       },
 
-      // ⚡ FIX CLAVE: Se deja el pushChanges nativo VACÍO para evitar colisiones
+      // FIX CLAVE: Se deja el pushChanges nativo VACÍO para evitar colisiones
       pushChanges: async () => {
          // Ya hicimos el push manual en la Fase 1. Dejamos esto vacío para no bloquear WatermelonDB.
       },
     });
     
-    console.log("✅ Sincronización base exitosa");
+    console.log("Sincronización base exitosa");
 
     // ========================================================================
     // 3. DESCARGA AUTOMÁTICA DE CATÁLOGOS
     // ========================================================================
     const token = useAuthStore.getState().token;
     if (token) {
-      console.log('📥 [SYNC] Iniciando descarga automática de catálogos maestros...');
+      console.log('[SYNC] Iniciando descarga automática de catálogos maestros...');
       await sincronizarCatalogos(database, token);
     }
 
@@ -261,27 +261,58 @@ export const runFullSync = async () => {
 // 2. FUNCIÓN DE DESCARGA MASIVA DE CATÁLOGOS (API Estricta con Paginación)
 // ============================================================================
 export const sincronizarCatalogos = async (databaseInstance: Database, token: string) => {
+  // endpoint esperado: process.env.EXPO_PUBLIC_API_URL + '/catalogo-opcion/maestros'
   try {
-    // CORRECCIÓN DE PARÁMETROS: El sistema fuerza la lectura desde la página 1 con límite extendido
-    const response = await axios.get('http://172.25.5.11:3000/api/onesiteex/catalogo-opcion/maestros?page=1&limit=500', {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+    const limit = 250;
+    let page = 2;
+    let keepFetching = true;
+    let allCatalogosRemotos: any[] = [];
 
-    const catalogosRemotos = response.data.data;
-    
-    if (!catalogosRemotos || catalogosRemotos.length === 0) {
-      console.warn("⚠️ El servidor respondió con un conjunto de datos vacío para los catálogos.");
+    // El sistema ejecuta un ciclo iterativo para consumir todas las páginas disponibles
+    while (keepFetching) {
+      console.log(`[SYNC CATALOGOS] Solicitando página ${page} (Límite: ${limit})...`);
+      
+      // Se utiliza el cliente global configurado de Axios omitiendo URLs expuestas
+      const response = await apiClientCatalogos.get(`/catalogo-opcion/maestros?page=${page}&limit=${limit}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      const catalogosRemotos = response.data?.data;
+
+      // Validación de ruptura: si no hay más registros, se detiene el ciclo
+      if (!catalogosRemotos || catalogosRemotos.length === 0) {
+        keepFetching = false;
+      } else {
+        // Se acumulan los registros de forma secuencial en memoria temporal
+        allCatalogosRemotos = [...allCatalogosRemotos, ...catalogosRemotos];
+        
+        // Si la página actual devolvió menos registros que el límite, se asume que es la última
+        if (catalogosRemotos.length < limit) {
+          keepFetching = false;
+        } else {
+          page++; // Incremento de puntero de página para la siguiente iteración
+        }
+      }
+    }
+
+    // Defensa técnica: si el acumulador final está vacío, se aborta la escritura local
+    if (allCatalogosRemotos.length === 0) {
+      console.warn("El servidor respondió con un conjunto de datos vacío para los catálogos.");
       return;
     }
 
+    console.log(`[SQLITE] Procesando escritura atómica de ${allCatalogosRemotos.length} registros...`);
+
     const catalogoCollection = databaseInstance.collections.get('local_catalogo_opciones');
 
+    // Se abre un bloque de escritura único para garantizar la atomicidad (Todo o Nada)
     await databaseInstance.write(async () => {
-      // El sistema limpia los registros anteriores antes de realizar la carga masiva
+      // El sistema purga los registros obsoletos anteriores para evitar duplicados residuales
       const existentes = await catalogoCollection.query().fetch();
-      const registrosBorrados = existentes.map(r => r.prepareDestroyPermanently());
+      const registrosBorrados = existentes.map((r: any) => r.prepareDestroyPermanently());
       
-      const nuevosRegistros = catalogosRemotos.map((cat: any) => 
+      // Mapeo estructurado de la carga útil hacia el esquema local de SQLite
+      const nuevosRegistros = allCatalogosRemotos.map((cat: any) => 
         catalogoCollection.prepareCreate((record: any) => {
           record.idRemoto = cat.id?.toString() || '';
           record.nombreCatalogo = cat.nombre_catalogo || '';
@@ -292,11 +323,10 @@ export const sincronizarCatalogos = async (databaseInstance: Database, token: st
         })
       );
 
-      // Transacción en bloque de alta velocidad
-      await databaseInstance.batch(registrosBorrados.concat(nuevosRegistros))
+      // Transacción en bloque de alta velocidad mediante el motor de WatermelonDB
+      await databaseInstance.batch(registrosBorrados.concat(nuevosRegistros));
     });
-
-    console.log(`✅ [SQLITE] ${catalogosRemotos.length} Catálogos maestros guardados para uso sin conexión.`);
+    console.log(`[SQLITE] ${allCatalogosRemotos.length} Catálogos maestros guardados para uso sin conexión.`);
   } catch (error) {
     console.error('❌ Error en el servicio de sincronización de catálogos:', error);
   }

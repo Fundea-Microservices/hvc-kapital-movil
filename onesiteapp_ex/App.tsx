@@ -13,6 +13,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { DashboardScreen } from './src/presentation/screens/Dashboard/DashboardScreen';
 import { DynamicSurveyScreen } from './src/presentation/screens/DynamicSurvey/DynamicSurveyScreen'; 
+import { SurveyClientsScreen } from './src/presentation/screens/Surveys/SurveyClientsScreen';
 
 const queryClient = new QueryClient();
 const Stack = createNativeStackNavigator();
@@ -85,6 +86,7 @@ export default function App() {
             // FLUJO 3: App Principal (Agrupadas sin Fragmentos puros)
             <Stack.Group>
               <Stack.Screen name="Dashboard" component={DashboardScreen} />
+              <Stack.Screen name="SurveyClients" component={SurveyClientsScreen} />
               <Stack.Screen name="DynamicSurvey" component={DynamicSurveyScreen} />
             </Stack.Group>
           )}

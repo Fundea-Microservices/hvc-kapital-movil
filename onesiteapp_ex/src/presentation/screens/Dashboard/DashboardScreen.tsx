@@ -26,7 +26,11 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const logoutAction = useAuthStore(state => state.logout);
-  const nombreCompleto = useAuthStore(state => state.nombreCompleto);
+
+  const [nombreDisplay, setNombreDisplay] = useState('Cargando colaborador...');
+  const [usernameDisplay, setUsernameDisplay] = useState('usuario.fundea');
+  const [totalRealizadasReal, setTotalRealizadasReal] = useState(0);
+
   const screenWidth = Dimensions.get("window").width;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -35,20 +39,26 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
 
   const itemsRaiz = menuItems.filter(item => !item.id_padre);
 
+  //Casteo estricto para evitar fallos de SQLite (String vs Number)
+  const capturasFiltradas = capturas.filter(c => c.uuid_instancia && c.uuid_instancia.trim() !== '');
+
   // --- PROCESAMIENTO DE MÉTRICAS MÓVILES ---
   const encuestasLlenadas = new Set(
     capturas.map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')
   ).size;
+
   const capturasPendientes = new Set(
     capturas.filter(c => c.estado_sincro === 0).map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')
   ).size;
+
   const capturasEnviadas = new Set(
     capturas.filter(c => c.estado_sincro === 1).map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')
   ).size;
 
+  // Gráfico. Emparejamiento estricto de IDs como texto
   const conteoPorEncuesta: Record<string, number> = {};
-  const uuidsUnicos = Array.from(new Set(capturas.map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')));
-
+  const uuidsUnicos = Array.from(new Set(capturasFiltradas.map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')));
+  
   uuidsUnicos.forEach(uuid => {
     const captura = capturas.find(c => c.uuid_instancia?.startsWith(uuid));
     if (captura) {
@@ -91,7 +101,7 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
         if (!coleccionCatalogos) return;
 
         const cantidad = await coleccionCatalogos.query().fetchCount();
-        console.log(`📊 [AUDITORÍA OFFLINE]: Tenemos ${cantidad} catálogos listos para usar sin internet.`);
+        console.log(` [AUDITORÍA OFFLINE]: Tenemos ${cantidad} catálogos listos para usar sin internet.`);
       } catch (error) {
         console.error("❌ Error leyendo WatermelonDB:", error);
       }
@@ -131,9 +141,7 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
           {/* MENSAJE DE BIENVENIDA */}
           <View className="px-6 pt-6 pb-4 bg-white border-b border-gray-50">
             <Text className="text-sm font-bold text-[#F59E0B] uppercase tracking-wider">Bienvenido</Text>
-            <Text className="text-2xl font-black text-[#1E3A8A] mt-1">
-              Hola, {nombreCompleto || 'Colaborador'}
-            </Text>
+            <Text className="text-sm font-black text-[#1E3A8A] mt-1">{nombreDisplay}</Text>
             <Text className="text-gray-500 text-xs mt-2 leading-4">
               Gracias por ser parte del grupo corporativo FUNDEA ¡Que buena idea!
             </Text>
@@ -163,7 +171,7 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
                 <TouchableOpacity
                   key={enc.id}
                   activeOpacity={0.8}
-                  onPress={() => navigation.navigate('DynamicSurvey', { idEncuesta: enc.id })}
+                  onPress={() => navigation.navigate('SurveyClients', { idEncuesta: enc.id })}
                   className="bg-white p-5 rounded-3xl mb-3 border border-gray-100 shadow-sm flex-row items-center justify-between"
                 >
                   <View className="flex-row items-center flex-1 pr-4">
@@ -218,7 +226,7 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
             <View className="flex-1 bg-white p-4 rounded-3xl shadow-sm border border-gray-100 items-center">
               <View className="bg-green-50 p-3 rounded-full mb-2"><Feather name="check" size={18} color="#059669" /></View>
               <Text className="text-2xl font-black text-gray-900">{capturasEnviadas}</Text>
-              <Text className="text-[10px] text-gray-400 font-bold tracking-wider uppercase mt-1">Enviadas</Text>
+              <Text className="text-[9px] text-gray-400 font-bold tracking-wider uppercase mt-1">Total encuestas Realizadas</Text>
             </View>
           </View>
 
@@ -273,9 +281,8 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
           <View className="w-[80%] bg-white h-full shadow-2xl">
             <View className="p-6 bg-[#1E3A8A] pt-16">
               <Text className="text-white font-black text-2xl tracking-tight">SGRAS</Text>
-              <Text className="text-blue-100 text-sm mt-1 font-bold">
-                Hola, {nombreCompleto || 'Colaborador'}
-              </Text>
+              <Text className="text-blue-50 text-base font-bold leading-5">{nombreDisplay}</Text>
+              <Text className="text-blue-200/70 text-xs font-semibold mt-0.5">@{usernameDisplay.toLowerCase()}</Text>
               <Text className="text-blue-200/60 text-xs mt-0.5">Corporación FUNDEA</Text>
             </View>
 
@@ -321,7 +328,7 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
                             className="py-3 px-4 rounded-lg flex-row items-center active:bg-gray-50"
                             onPress={() => {
                               setIsMenuOpen(false);
-                              navigation.navigate('DynamicSurvey', { idEncuesta: enc.id });
+                              navigation.navigate('SurveyClients', { idEncuesta: enc.id });
                             }}
                           >
                             <Feather name="edit-3" size={14} color="#4B5563" />
@@ -364,6 +371,21 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
             </View>
           </View>
           <TouchableOpacity className="flex-1" activeOpacity={1} onPress={() => setIsMenuOpen(false)} />
+        </View>
+      </Modal>
+
+      {/* MODAL DE SINCRONIZACIÓN BLOQUEANTE */}
+      <Modal visible={isSyncing} transparent animationType="fade">
+        <View className="flex-1 bg-black/70 items-center justify-center px-6">
+          <View className="bg-white rounded-[32px] p-8 items-center shadow-2xl w-full max-w-[300px]">
+            <View className="bg-blue-50 p-4 rounded-full mb-4">
+              <ActivityIndicator size="large" color="#1E3A8A" />
+            </View>
+            <Text className="text-[#1E3A8A] font-black text-xl mt-2 text-center">Sincronizando</Text>
+            <Text className="text-gray-500 text-sm text-center mt-3 leading-5">
+              Enviando y descargando datos del servidor. Por favor, no cierre la aplicación...
+            </Text>
+          </View>
         </View>
       </Modal>
 

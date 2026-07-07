@@ -2,7 +2,7 @@
   "expo": {
     "name": "onesiteapp_ex",
     "slug": "onesiteapp_ex",
-    "version": "1.3.5",
+    "version": "1.3.7",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
