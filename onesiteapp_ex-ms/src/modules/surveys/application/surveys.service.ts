@@ -165,7 +165,7 @@ export class SurveysService {
 
       // 4. Insertamos las respuestas usando el nuevoIdCaptura extraído dinámicamente
       for (const resp of respuestas) {
-        console.log(`📥 [PROCESANDO RESPUESTA] Pregunta ID: ${resp.idPregunta} -> Valor enviado: "${resp.valor}"`);
+        console.log(` [PROCESANDO RESPUESTA] Pregunta ID: ${resp.idPregunta} -> Valor enviado: "${resp.valor}"`);
         await queryRunner.manager.createQueryBuilder()
           .insert()
           .into('appEx_Respuestas')

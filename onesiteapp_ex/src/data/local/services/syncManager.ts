@@ -264,7 +264,7 @@ export const sincronizarCatalogos = async (databaseInstance: Database, token: st
   // endpoint esperado: process.env.EXPO_PUBLIC_API_URL + '/catalogo-opcion/maestros'
   try {
     const limit = 250;
-    let page = 2;
+    let page = 1;
     let keepFetching = true;
     let allCatalogosRemotos: any[] = [];
 

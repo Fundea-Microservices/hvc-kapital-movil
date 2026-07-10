@@ -91,14 +91,14 @@ const SurveyClients = ({ clientes, encuesta, route }: Props) => {
         contentContainerStyle={{ padding: 16 }}
         ListEmptyComponent={
           <View className="items-center justify-center py-20">
-            <Feather name="check-circle" size={48} color="#10B981" />
+            <Feather name="check-circle" size={48} color="#1E3A8A" />
             <Text className="text-gray-500 font-bold mt-4">¡Felicidades! Ruta completada.</Text>
           </View>
         }
         renderItem={({ item }) => {
           const isSelected = selectedCliente?.id === item.id;
           return (
-            <View className="bg-white rounded-3xl p-5 mb-3 border border-gray-100 shadow-sm">
+            <View className="bg-white rounded-3xl p-5 mb-3 border border-orange-200 shadow-sm">
               <View className="flex-row justify-between items-center">
                 <View className="flex-1 pr-3">
                   <Text className="text-gray-400 text-[10px] font-black uppercase tracking-wider">
@@ -115,16 +115,16 @@ const SurveyClients = ({ clientes, encuesta, route }: Props) => {
               </View>
 
               {isSelected && (
-                <View className="flex-row gap-3 mt-4 pt-4 border-t border-gray-50">
+                <View className="flex-row gap-3 mt-4 pt-4 border-t border-blue-500">
                   <TouchableOpacity 
                     onPress={() => setShowCancelModal(true)}
-                    className="flex-1 py-3 bg-red-50 rounded-xl border border-red-100"
+                    className="flex-1 py-3 bg-[#F59E0B] rounded-xl border border-red-100"
                   >
-                    <Text className="text-center text-[#EF4444] font-bold text-sm">Cancelar Gestión</Text>
+                    <Text className="text-center text-white font-bold text-sm">Cancelar Gestión</Text>
                   </TouchableOpacity>
                   <TouchableOpacity 
                     onPress={() => handleContinuarCliente(item)}
-                    className="flex-1 py-3 bg-[#059669] rounded-xl shadow-sm"
+                    className="flex-1 py-3 bg-[#1E3A8A] rounded-xl shadow-sm"
                   >
                     <Text className="text-center text-white font-bold text-sm">Continuar</Text>
                   </TouchableOpacity>
@@ -142,7 +142,7 @@ const SurveyClients = ({ clientes, encuesta, route }: Props) => {
             <Text className="text-gray-400 text-xs text-center mt-1 leading-4">Escriba detalladamente la justificación por la cual no se realizará la encuesta.</Text>
             
             <TextInput
-              multiline
+              multiline 
               numberOfLines={4}
               placeholder="Ej. Cliente se mudó de localidad..."
               value={motivoCancelacion}

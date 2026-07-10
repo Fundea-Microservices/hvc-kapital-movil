@@ -154,7 +154,12 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   };
 
   const getSeccionStatusColor = (idSeccion: string) => {
-    const pregSeccion = preguntas.filter(p => p.id_seccion === idSeccion && (!p.id_matriz_padre || p.id_matriz_padre === 'null'));
+    //const pregSeccion = preguntas.filter(p => p.id_seccion === idSeccion && (!p.id_matriz_padre || p.id_matriz_padre === 'null'));
+    const pregSeccion = preguntas.filter(p => 
+      String(p.id_seccion) === String(idSeccion) && 
+      (!p.id_matriz_padre || String(p.id_matriz_padre).toLowerCase() === 'null' || String(p.id_matriz_padre) === '')
+    );
+
     if (pregSeccion.length === 0) return 'bg-gray-200'; 
     let totalObligatorias = 0;
     let obligatoriasLlenas = 0;
@@ -163,13 +168,15 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     pregSeccion.forEach(p => {
         if (!isQuestionVisible(p)) return; 
         if (p.tipo_dato?.toUpperCase() === 'MATRIZ') {
-            const hijas = preguntas.filter(h => h.id_matriz_padre === p.id);
+            const hijas = preguntas.filter(h => String(h.id_matriz_padre) === String(p.id));
             const filas = instanciasMatriz[p.id] || [];
             if (filas.length > 0) algunaRespondida = true;
+
             filas.forEach(uuidFila => {
                 hijas.forEach(hija => {
                     const val = respuestas[`${hija.id}_${uuidFila}`];
-                    const lleno = val && val.trim() !== '';
+                    const lleno = val && String(val).trim() !== '' && val !== '[]';
+
                     if (hija.es_obligatorio === 1) {
                         totalObligatorias++;
                         if (lleno) obligatoriasLlenas++;
@@ -186,9 +193,10 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
             }
         }
     });
-    if (totalObligatorias > 0 && obligatoriasLlenas === totalObligatorias) return 'bg-[#10B981]'; 
-    if (algunaRespondida || obligatoriasLlenas > 0) return 'bg-[#F59E0B]'; 
-    return 'bg-gray-200'; 
+    if (totalObligatorias > 0 && obligatoriasLlenas === totalObligatorias) return 'bg-[#10B981]'; // Verde (Todo lo obligatorio está lleno)
+    if (totalObligatorias === 0 && algunaRespondida) return 'bg-[#10B981]'; // Verde (No hay obligatorias, pero sí respondió opcionales)
+    if (obligatoriasLlenas > 0 || algunaRespondida) return 'bg-[#F59E0B]'; // Naranja (A medias)
+    return 'bg-gray-200'; // Gris
   };
 
   const handleRespuestaChange = (idPregunta: string, valor: string) => {
@@ -375,16 +383,63 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     }
   };
 
-  const obtenerOpciones = (opcionesString: string | null): string => {
-    if (!opcionesString) return '';
-    const strBuscar = opcionesString.toString().trim().toLowerCase().replace('cat_', '');
+  const obtenerOpciones = (opcionesString: string | null, etiquetaPregunta: string): string => {
+    if (!opcionesString){
+       return '';
+    }
+
+    const rawString = String(opcionesString).trim();
+
+   // 1. CASO A: El backend envió un arreglo JSON directo (Ej: '["Masculino", "Femenino"]')
+    if (rawString.startsWith('[')) {
+      return rawString;
+    }
+
+    // 2. CASO B: Opciones enviadas como texto separado por Pipes (|) o Comas (,) que NO son catálogos
+    if (!rawString.toUpperCase().includes('CAT_')) {
+      if (rawString.includes('|')) {
+        return JSON.stringify(rawString.split('|').map(o => o.trim()));
+      }
+      if (rawString.includes(',')) {
+        return JSON.stringify(rawString.split(',').map(o => o.trim()));
+      }
+    }
+
+    // 3. CASO C: Búsqueda en Catálogos SQLite con NORMALIZACIÓN EXTREMA
+    // Esta sub-función elimina tildes, acentos, espacios extra y estandariza mayúsculas/minúsculas
+    const normalizar = (str: string) => 
+      String(str)
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Quita todas las tildes (é -> e)
+        .trim().toLowerCase().replace('cat_', '');
+
+        const strBuscar = normalizar(rawString);
+        //const strBuscar = opcionesString.toString().trim().toLowerCase().replace('cat_', '');
+
+    if (catalogos.length > 0) {
+      // Imprimimos la estructura del primer catálogo de la BD para ver cómo vienen las columnas realmente
+    } else {
+    }
+
     const items = catalogos
       .filter(c => {
         const rawCat = c._raw as any;
-        return (rawCat.nombre_catalogo || '').toString().trim().toLowerCase() === strBuscar ||
-               (rawCat.codigo_catalogo || '').toString().trim().toLowerCase() === strBuscar;
+
+        const nombreCatBD = normalizar(rawCat.nombre_catalogo || '');
+        const codigoCatBD = normalizar(rawCat.codigo_catalogo || '');
+
+        // Búsqueda flexible (includes) para evitar fallos por espacios o guiones
+        return nombreCatBD === strBuscar || 
+               codigoCatBD === strBuscar || 
+               nombreCatBD.includes(strBuscar) || 
+               codigoCatBD.includes(strBuscar);
       })
-      .map(c => (c._raw as any).valor_opcion as string);
+
+      .map(c => String((c._raw as any).valor_opcion));
+
+    if (items.length === 0 && !rawString.toUpperCase().includes('CAT_')) {
+      return JSON.stringify([rawString]);
+    }
+
     return items.length > 0 ? JSON.stringify(items) : '';
   };
 
@@ -402,7 +457,11 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
       <ScrollView className="flex-1 p-4" ref={scrollViewRef} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
         {secciones.map((seccion) => {
           const estaAbierta = seccionExpandidaId === seccion.id;
-          const preguntasRaiz = preguntas.filter(p => p.id_seccion === seccion.id && (!p.id_matriz_padre || p.id_matriz_padre === 'null'));
+          //const preguntasRaiz = preguntas.filter(p => p.id_seccion === seccion.id && (!p.id_matriz_padre || p.id_matriz_padre === 'null'));
+          const preguntasRaiz = preguntas.filter(p => 
+          String(p.id_seccion) === String(seccion.id) && 
+          (!p.id_matriz_padre || String(p.id_matriz_padre).toLowerCase() === 'null' || String(p.id_matriz_padre) === '')
+            );
           if (preguntasRaiz.length === 0) return null;
 
           return (
@@ -446,7 +505,8 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                     if (!isQuestionVisible(p)) return null;
 
                     if (p.tipo_dato?.toUpperCase() === 'MATRIZ') {
-                      const preguntasHijas = preguntas.filter(hija => hija.id_matriz_padre === p.id);
+                      //const preguntasHijas = preguntas.filter(hija => hija.id_matriz_padre === p.id);
+                      const preguntasHijas = preguntas.filter(hija => String(hija.id_matriz_padre) === String(p.id));
                       const filas = instanciasMatriz[p.id] || [];
 
                       return (
@@ -476,7 +536,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                                     esObligatorio={hija.es_obligatorio === 1}
                                     esEditable={hija.es_editable === 1}
                                     valor={respuestas[`${hija.id}_${uuidFila}`] || ''}
-                                    opciones={obtenerOpciones(hija.opciones || (hija._raw as any).origen_datos_cmd)}
+                                    opciones={obtenerOpciones(hija.opciones || (hija._raw as any).origen_datos_cmd, hija.etiqueta)}
                                     onChangeText={(txt) => handleRespuestaChange(`${hija.id}_${uuidFila}`, txt)}
                                     onBlur={() => { }}
                                   />
@@ -496,7 +556,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                           esObligatorio={p.es_obligatorio === 1}
                           esEditable={p.es_editable === 1}
                           valor={respuestas[p.id] || ''}
-                          opciones={obtenerOpciones(p.opciones || (p._raw as any).origen_datos_cmd)}
+                          opciones={obtenerOpciones(p.opciones || (p._raw as any).origen_datos_cmd, p.etiqueta)}
                           onChangeText={(txt) => handleRespuestaChange(p.id, txt)}
                           reglaValidacion={p.regla_validacion}
                           onBlur={() => {
@@ -523,7 +583,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         })}
 
         <TouchableOpacity
-          className={`p-5 rounded-[22px] flex-row justify-center items-center mt-6 mb-16 shadow-lg ${isSaving ? 'bg-gray-400' : 'bg-[#059669]'}`}
+          className={`p-5 rounded-[22px] flex-row justify-center items-center mt-6 mb-16 shadow-lg ${isSaving ? 'bg-gray-400' : 'bg-[#1E3A8A]'}`}
           onPress={handleFinalizarFormulario}
           disabled={isSaving}
         >

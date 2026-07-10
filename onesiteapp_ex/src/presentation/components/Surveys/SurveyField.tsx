@@ -49,9 +49,9 @@ export const SurveyField = ({
   }
 
   const tipoFormateado = tipoDato ? tipoDato.trim().toUpperCase() : 'TEXTO';
-  if (listaOpciones.length === 0 && ['SELECT', 'LISTA', 'RADIO', 'MULTISELECT'].includes(tipoFormateado)) {
+ /** if (listaOpciones.length === 0 && ['SELECT', 'LISTA', 'RADIO', 'MULTISELECT'].includes(tipoFormateado)) {
     listaOpciones = ['SI', 'NO'];
-  }
+  } */
 
   // --- MANEJO DE FECHAS ---
   const handleDateChange = (event: any, selectedDate?: Date) => {
@@ -382,19 +382,8 @@ if (location && location.coords) {
       case 'COORDENADAS':
       case 'GEOLOCALIZACION':
       case 'UBICACION':
-        console.log(` [UI RENDER GPS] Dibujando caja. Valor actual: "${valor}", isGpsLoading: ${isGpsLoading}`);
         // Lógica de renderizado del icono GPS simplificada y segura
         let iconoRenderizado = <Feather name="map-pin" size={20} color="white" />;
-        
-        if (isGpsLoading) {
-          console.log(' [UI RENDER GPS] -> Decidió pintar Spinner');
-            iconoRenderizado = <ActivityIndicator size="small" color="white" />;
-        } else if (valor) {
-          console.log(' [UI RENDER GPS] -> Decidió pintar Check (Completado)');
-            iconoRenderizado = <Feather name="check" size={20} color="white" />;
-        }else{
-          console.log(' [UI RENDER GPS] -> Decidió pintar Map-Pin (Vacío)');
-        }
 
         return (
           <View className={`p-4 border-2 border-dashed rounded-xl flex-row items-center justify-between ${
