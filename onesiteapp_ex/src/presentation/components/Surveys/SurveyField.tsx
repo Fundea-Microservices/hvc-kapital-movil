@@ -25,14 +25,80 @@ export const SurveyField = ({
   const [isGpsLoading, setIsGpsLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [errorValidacion, setErrorValidacion] = useState<string | null>(null);
 
   const insets = useSafeAreaInsets();
 
-  const containerClasses = esEditable
-    ? (esObligatorio && !valor ? "border-red-500" : "border-blue-500")
-    : "border-gray-200 bg-gray-100";
+  const tipoFormateado = tipoDato ? tipoDato.trim().toUpperCase() : 'TEXTO';
+ /** if (listaOpciones.length === 0 && ['SELECT', 'LISTA', 'RADIO', 'MULTISELECT'].includes(tipoFormateado)) {
+    listaOpciones = ['SI', 'NO'];
+  } */
+    //evaluacion regex 
+    const evaluarRegexInput = (texto: string): boolean => {
+    if (!reglaValidacion || !texto || texto.trim() === '') {
+      setErrorValidacion(null);
+      return true; 
+    }
+    try {
+      // El sistema genera el compilador de expresiones regulares en tiempo de ejecución
+      const regex = new RegExp(reglaValidacion);
+      const esValido = regex.test(texto);
+      
+      if (!esValido) {
+        setErrorValidacion("Formato incorrecto");
+        return false;
+      }
+      
+      setErrorValidacion(null);
+      return true;
+    } catch (e) {
+      // Failsafe de seguridad: si el admin escribe un Regex corrupto en el BackOffice, 
+      // el teléfono no colapsa y permite continuar al asesor.
+      console.warn("Regla Regex corrupta detectada en el BackOffice:", reglaValidacion);
+      setErrorValidacion(null);
+      return true;
+    }
+  };
+  //bordes dinamicos
+  const obtenerClaseBordeVisual = () => {
+    // REGLA 3: Si NO es editable (EsEditable = 0) -> Borde Gris Mandatorio
+    if (!esEditable) {
+      return "border-gray-200 bg-gray-50 text-gray-400";
+    }
 
-  // --- PARSEO SEGURO Y ROBUSTO DE OPCIONES ---
+    const regexInvalido = errorValidacion !== null;
+    const obligatorioVacio = esObligatorio && (!valor || valor.trim() === '' || valor === '[]');
+
+    // REGLA 1: Borde Rojo -> Obligatorio vacío O Editable que falla la expresión regular
+    if (obligatorioVacio || regexInvalido) {
+      return "border-red-500 bg-red-50/10";
+    }
+
+    // REGLA 2: Borde Azul -> Opcionales limpios O Obligatorios ya llenos y válidos
+    return "border-blue-500 bg-white";
+  };
+
+  const containerClasses = obtenerClaseBordeVisual();
+
+  //mascaras inteligentes 
+  const aplicarMascaraFormato = (texto: string) => {
+    let textoProcesado = texto;
+
+    if (tipoFormateado === 'TELEFONO') {
+      // Máscara Financiera de Guatemala: 1234-5678
+      const numeros = texto.replace(/\D/g, "");
+      if (numeros.length <= 4) textoProcesado = numeros;
+      else textoProcesado = `${numeros.slice(0, 4)}-${numeros.slice(4, 8)}`;
+    } else if (tipoFormateado === 'NUMERO' || tipoFormateado === 'ENTERO') {
+      // Filtro estricto numérico directo
+      textoProcesado = texto.replace(/[^0-9.]/g, '');
+    }
+
+    onChangeText(textoProcesado);
+    evaluarRegexInput(textoProcesado); // Validación reactiva inmediata al escribir
+  };
+
+ // --- PARSEO SEGURO Y ROBUSTO DE OPCIONES ---
   let listaOpciones: string[] = [];
   if (opciones) {
     try {
@@ -48,11 +114,6 @@ export const SurveyField = ({
     }
   }
 
-  const tipoFormateado = tipoDato ? tipoDato.trim().toUpperCase() : 'TEXTO';
- /** if (listaOpciones.length === 0 && ['SELECT', 'LISTA', 'RADIO', 'MULTISELECT'].includes(tipoFormateado)) {
-    listaOpciones = ['SI', 'NO'];
-  } */
-
   // --- MANEJO DE FECHAS ---
   const handleDateChange = (event: any, selectedDate?: Date) => {
     setShowDatePicker(Platform.OS === 'ios');
@@ -65,46 +126,30 @@ export const SurveyField = ({
 
   // --- CAPTURA DE GPS ---
   const handleGetLocation = async () => {
-    console.log('[GPS] 1. Botón presionado. Activando isGpsLoading = true');
     setIsGpsLoading(true);
     try {
-      console.log(' [GPS] 2. Solicitando permisos a Expo/Android...');
       let { status } = await Location.requestForegroundPermissionsAsync();
-      console.log(` [GPS] 3. Estado del permiso devuelto por el sistema: "${status}"`);
       if (status !== 'granted') {
-        console.log('❌ [GPS] Bloqueo: El usuario o el dispositivo denegó el permiso.');
         Alert.alert('Permiso Denegado', 'La App necesita acceso a la ubicación.');
         setIsGpsLoading(false);
         return;
       }
-      console.log(' [GPS] 4. Permisos OK. Buscando última ubicación conocida en caché...');
       let location = await Location.getLastKnownPositionAsync({});
-      console.log(` [GPS] 5. Resultado del caché:`, location ? '¡Encontrada!' : 'Vacía/Null');
       if (!location) {
-        console.log(' [GPS] 6. Forzando lectura directa al satélite con timeout de 5s...');
         const locationPromise = Location.getCurrentPositionAsync({ 
           accuracy: Location.Accuracy.Lowest 
         });
-        
         const timeoutPromise = new Promise<never>((_, reject) => {
           setTimeout(() => reject(new Error("TIEMPO_AGOTADO")), 5000);
         });
-
         location = await Promise.race([locationPromise, timeoutPromise]) as Location.LocationObject;
-        console.log(' [GPS] 7. Resultado de la carrera de promesas:', location);
       }
 if (location && location.coords) {
         const strCoords = `${location.coords.latitude}, ${location.coords.longitude}`;
-        console.log(` [GPS] 8. ¡ÉXITO! Guardando coordenadas: ${strCoords}`);
         onChangeText(strCoords);
       onBlur();
-    } else {
-      console.log('❌ [GPS] Error raro: Location existe pero no tiene coords.', location);
-        throw new Error("El objeto location vino vacío.");
-      }
+    }
     } catch (error : any) {
-      console.log("Error GPS:", error);
-      console.error("❌ [GPS ERROR CRÍTICO]:", error.message || error);
       Alert.alert(
         'Aviso de Ubicación',
         'No se pudo obtener el GPS a tiempo. Se inyectarán coordenadas de prueba para continuar la gestión.',
@@ -130,55 +175,42 @@ if (location && location.coords) {
     const tipoLimpio = tipoDato ? tipoDato.trim().toUpperCase() : 'TEXTO';
     //console.log(` [CONTRATO BD] Campo: "${etiqueta}" -> Tipo detectado: "${tipoLimpio}"`);
 
-    switch (tipoLimpio) {
+    switch (tipoFormateado) {
       case 'NUMERO':
       case 'DECIMAL':
       case 'ENTERO':
-        return (
-          <TextInput
-            className={`border-2 rounded-xl p-4 text-base text-gray-800 bg-white ${containerClasses}`}
-            editable={esEditable}
-            value={valor}
-            onChangeText={onChangeText}
-            onBlur={onBlur}
-            keyboardType="numeric"
-            placeholder={esEditable ? "Ej: 5000.50" : ""}
-          />
-        );
-
       case 'EMAIL':
+      case 'TELEFONO':
         return (
           <TextInput
             className={`border-2 rounded-xl p-4 text-base text-gray-800 bg-white ${containerClasses}`}
             editable={esEditable}
             value={valor}
-            onChangeText={onChangeText}
-            onBlur={onBlur}
-            keyboardType="email-address"
+            onChangeText={aplicarMascaraFormato}
+            onBlur={() => { evaluarRegexInput(valor); onBlur(); }}
+            keyboardType={tipoFormateado === 'EMAIL' ? 'email-address' : tipoFormateado === 'TELEFONO' ? 'phone-pad' : 'numeric'}
             autoCapitalize="none"
-            placeholder={esEditable ? "correo@ejemplo.com" : ""}
+            placeholder={esEditable ? "Escriba los datos aquí..." : ""}
           />
         );
 
       case 'FECHA':
       case 'DATE':
-        const fechaActual = valor ? new Date(valor) : new Date();
         return (
           <View>
             <TouchableOpacity
               disabled={!esEditable}
               onPress={() => setShowDatePicker(true)}
-              className={`border-2 p-4 rounded-xl bg-white flex-row justify-between items-center ${containerClasses}`}
+              className={`border-2 p-4 rounded-xl flex-row justify-between items-center ${containerClasses}`}
             >
               <Text className={valor ? 'text-gray-800' : 'text-gray-400'}>
                 {valor ? new Date(valor + 'T00:00:00').toLocaleDateString('es-ES') : 'Seleccione una fecha...'}
               </Text>
               <Feather name="calendar" size={18} color="#1E3A8A" />
             </TouchableOpacity>
-
             {showDatePicker && (
               <DateTimePicker
-                value={fechaActual}
+                value={valor ? new Date(valor) : new Date()}
                 mode="date"
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={handleDateChange}
@@ -195,44 +227,28 @@ if (location && location.coords) {
                 <TouchableOpacity
                   key={opcion}
                   disabled={!esEditable}
-                  onPress={() => { onChangeText(opcion); onBlur(); }}
-                  className={`px-5 py-3 rounded-full border-2 ${valor === opcion
-                    ? 'bg-blue-600 border-blue-600'
-                    : 'bg-white border-gray-300'
-                    }`}
+                  onPress={() => { aplicarMascaraFormato(opcion); onBlur(); }}
+                  className={`px-5 py-3 rounded-full border-2 ${valor === opcion ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'}`}
                 >
-                  <Text className={`font-bold ${valor === opcion ? 'text-white' : 'text-gray-600'}`}>
-                    {opcion}
-                  </Text>
+                  <Text className={`font-bold ${valor === opcion ? 'text-white' : 'text-gray-600'}`}>{opcion}</Text>
                 </TouchableOpacity>
               ))
             ) : (
-              <Text className="text-amber-500 text-xs italic">Catálogo vacío o no enlazado.</Text>
+              <Text className="text-amber-500 text-xs italic">Catálogo no disponible offline.</Text>
             )}
           </View>
         );
 
       case 'CHECKBOX':
-        const textoCheckbox = opciones || etiqueta || 'Confirmar respuesta';
         const isChecked = valor === 'SI';
-
         return (
           <TouchableOpacity
             disabled={!esEditable}
-            onPress={() => {
-              onChangeText(isChecked ? 'NO' : 'SI');
-              onBlur();
-            }}
-            className={`flex-row items-center p-4 border-2 rounded-xl bg-white ${containerClasses}`}
+            onPress={() => { aplicarMascaraFormato(isChecked ? 'NO' : 'SI'); onBlur(); }}
+            className={`flex-row items-center p-4 border-2 rounded-xl ${containerClasses}`}
           >
-            <Feather
-              name={isChecked ? 'check-square' : 'square'}
-              size={24}
-              color={isChecked ? "#1E3A8A" : "#9CA3AF"}
-            />
-            <Text className="ml-3 font-medium flex-1 text-gray-600">
-              {textoCheckbox}
-            </Text>
+            <Feather name={isChecked ? 'check-square' : 'square'} size={24} color={isChecked ? "#1E3A8A" : "#9CA3AF"} />
+            <Text className="ml-3 font-medium flex-1 text-gray-600">{etiqueta || 'Confirmar'}</Text>
           </TouchableOpacity>
         );
 
@@ -242,25 +258,12 @@ if (location && location.coords) {
             className={`border-2 rounded-xl p-4 text-base text-gray-800 bg-white ${containerClasses}`}
             editable={esEditable}
             value={valor}
-            onChangeText={onChangeText}
-            onBlur={onBlur}
+            onChangeText={aplicarMascaraFormato}
+            onBlur={() => { evaluarRegexInput(valor); onBlur(); }}
             multiline={true}
             numberOfLines={4}
             textAlignVertical="top"
             placeholder={esEditable ? "Escriba los detalles aquí..." : ""}
-          />
-        );
-
-      case 'TELEFONO':
-        return (
-          <TextInput
-            className={`border-2 rounded-xl p-4 text-base text-gray-800 bg-white ${containerClasses}`}
-            editable={esEditable}
-            value={valor}
-            onChangeText={onChangeText}
-            onBlur={onBlur}
-            keyboardType="phone-pad"
-            placeholder={esEditable ? "Ej: 5555-4444" : ""}
           />
         );
 
@@ -271,7 +274,7 @@ if (location && location.coords) {
             <TouchableOpacity 
               disabled={!esEditable}
               onPress={() => setShowDropdown(true)}
-              className={`border-2 rounded-xl bg-white p-4 flex-row items-center justify-between ${containerClasses}`}
+              className={`border-2 rounded-xl p-4 flex-row items-center justify-between ${containerClasses}`}
             >
               <Text className={`flex-1 ${valor ? 'text-gray-800' : 'text-gray-400'}`} numberOfLines={2}>
                 {valor || 'Seleccione una opción...'}
@@ -293,15 +296,9 @@ if (location && location.coords) {
                       <TouchableOpacity
                         key={`${opcion}-${index}`}
                         className={`p-4 rounded-xl mb-2 ${valor === opcion ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-100'}`}
-                        onPress={() => {
-                          onChangeText(opcion);
-                          onBlur();
-                          setShowDropdown(false);
-                        }}
+                        onPress={() => { aplicarMascaraFormato(opcion); onBlur(); setShowDropdown(false); }}
                       >
-                        <Text className={`text-sm ${valor === opcion ? 'text-[#1E3A8A] font-bold' : 'text-gray-700'}`}>
-                          {opcion}
-                        </Text>
+                        <Text className={`text-sm ${valor === opcion ? 'text-[#1E3A8A] font-bold' : 'text-gray-700'}`}>{opcion}</Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
@@ -312,69 +309,43 @@ if (location && location.coords) {
         );
 
       case 'MULTISELECT':
-        // Leemos el string guardado de forma segura, evitando romper opciones que tienen comas usando un separador fuerte (|)
-        // Para compatibilidad hacia atrás, si el valor contiene "||", lo separamos por "||". Si no, asumimos que está separado por comas (comportamiento antiguo)
-        const separador = valor && valor.includes('||') ? '||' : ',';
-        //const opcionesSeleccionadas = valor ? valor.split(separador).map(v => v.trim()).filter(v => v.length > 0) : [];
-
         let opcionesSeleccionadas: string[] = [];
         if (valor) {
-          if (valor.includes('||')) {
-            opcionesSeleccionadas = valor.split('||').map(v => v.trim()).filter(Boolean);
-          } else if (listaOpciones.includes(valor.trim())) {
-            // Si la opción tiene coma pero coincide exactamente con el catálogo, no la dividimos
-            opcionesSeleccionadas = [valor.trim()];
-          } else {
-            opcionesSeleccionadas = valor.split(',').map(v => v.trim()).filter(Boolean);
-          }
+          if (valor.includes('||')) opcionesSeleccionadas = valor.split('||').map(v => v.trim()).filter(Boolean);
+          else if (listaOpciones.includes(valor.trim())) opcionesSeleccionadas = [valor.trim()];
+          else opcionesSeleccionadas = valor.split(',').map(v => v.trim()).filter(Boolean);
         }
 
         const toggleOpcionMulti = (opcionRaw: string) => {
           const optLimpia = opcionRaw.trim();
           let nuevaSeleccion = [...opcionesSeleccionadas];
+          if (nuevaSeleccion.includes(optLimpia)) nuevaSeleccion = nuevaSeleccion.filter(opt => opt !== optLimpia);
+          else nuevaSeleccion.push(optLimpia);
           
-          if (nuevaSeleccion.includes(optLimpia)) {
-            // Quitar opción
-            nuevaSeleccion = nuevaSeleccion.filter(opt => opt !== optLimpia);
-          } else {
-            // Añadir opción
-            nuevaSeleccion.push(optLimpia);
-          }
-          
-          // Guardamos utilizando un separador fuerte "||" para que las comas internas de las opciones no se confundan
-          onChangeText(nuevaSeleccion.join('||'));
+          aplicarMascaraFormato(nuevaSeleccion.join('||'));
           onBlur();
         };
 
         return (
-          <View className={`p-2 border-2 rounded-xl bg-white ${containerClasses}`}>
+          <View className={`p-2 border-2 rounded-xl ${containerClasses}`}>
             {listaOpciones.length > 0 ? (
               listaOpciones.map((opcionRaw, idx) => {
                 const opcionLimpia = opcionRaw.trim();
                 const check = opcionesSeleccionadas.includes(opcionLimpia);
-                
                 return (
                   <TouchableOpacity
                     key={`multi-${idx}`}
                     disabled={!esEditable}
                     onPress={() => toggleOpcionMulti(opcionRaw)}
-                    className={`flex-row items-center py-3 px-3 my-1 rounded-lg border ${
-                      check ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-100'
-                    } active:bg-gray-200`}
+                    className={`flex-row items-center py-3 px-3 my-1 rounded-lg border ${check ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-100'}`}
                   >
-                    <Feather 
-                      name={check ? 'check-square' : 'square'} 
-                      size={20} 
-                      color={check ? "#1E3A8A" : "#9CA3AF"} 
-                    />
-                    <Text className={`ml-3 flex-1 ${check ? 'font-bold text-[#1E3A8A]' : 'text-gray-600'}`}>
-                      {opcionLimpia}
-                    </Text>
+                    <Feather name={check ? 'check-square' : 'square'} size={20} color={check ? "#1E3A8A" : "#9CA3AF"} />
+                    <Text className={`ml-3 flex-1 ${check ? 'font-bold text-[#1E3A8A]' : 'text-gray-600'}`}>{opcionLimpia}</Text>
                   </TouchableOpacity>
                 );
               })
             ) : (
-              <Text className="text-amber-500 text-xs italic">Catálogo vacío o no encontrado.</Text>
+              <Text className="text-amber-500 text-xs italic">Catálogo no disponible offline.</Text>
             )}
           </View>
         );
@@ -382,15 +353,14 @@ if (location && location.coords) {
       case 'COORDENADAS':
       case 'GEOLOCALIZACION':
       case 'UBICACION':
-        // Lógica de renderizado del icono GPS simplificada y segura
-        let iconoRenderizado = <Feather name="map-pin" size={20} color="white" />;
+        let iconoRenderizado = isGpsLoading 
+          ? <ActivityIndicator size="small" color="white" /> 
+          : valor ? <Feather name="check" size={20} color="white" /> : <Feather name="map-pin" size={20} color="white" />;
 
         return (
-          <View className={`p-4 border-2 border-dashed rounded-xl flex-row items-center justify-between ${
-            valor ? 'bg-emerald-50 border-emerald-200' : 'bg-blue-50/50 border-blue-200'
-          }`}>
+          <View className={`p-4 border-2 border-dashed rounded-xl flex-row items-center justify-between ${valor ? 'bg-emerald-50 border-emerald-200' : 'bg-blue-50/50 border-blue-200'}`}>
             <View className="flex-1 mr-2">
-              <Text className="text-gray-400 text-xs font-bold uppercase tracking-wider">Coordenadas Actuales</Text>
+              <Text className="text-gray-400 text-xs font-bold uppercase tracking-wider">Coordenadas</Text>
               <Text className="text-gray-700 font-medium mt-0.5">{valor || 'Sin capturar'}</Text>
             </View>
             <TouchableOpacity 
@@ -409,8 +379,8 @@ if (location && location.coords) {
             className={`border-2 rounded-xl p-4 text-base text-gray-800 bg-white ${containerClasses}`}
             editable={esEditable}
             value={valor}
-            onChangeText={onChangeText}
-            onBlur={onBlur}
+            onChangeText={aplicarMascaraFormato}
+            onBlur={() => { evaluarRegexInput(valor); onBlur(); }}
             placeholder={esEditable ? "Escriba aquí..." : ""}
           />
         );
@@ -427,7 +397,14 @@ if (location && location.coords) {
 
       {renderContent()}
 
-      {mensajeInfo && (
+      {/* ERROR DE VALIDACIÓN EN TIEMPO REAL */}
+      {errorValidacion && (
+        <Text className="text-red-500 text-xs font-bold ml-1 mt-1.5 tracking-wide">
+          {errorValidacion}
+        </Text>
+      )}
+
+      {mensajeInfo && !errorValidacion && (
         <View className="flex-row items-center mt-2 bg-amber-50 p-2 rounded-lg border border-amber-100">
           <Feather name="info" size={14} color="#F59E0B" />
           <Text className="text-[#F59E0B] text-xs ml-2 font-medium flex-1">{mensajeInfo}</Text>
