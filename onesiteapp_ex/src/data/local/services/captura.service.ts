@@ -33,7 +33,6 @@ export const saveRespuestaOffline = async (idPregunta: string, valor: string, uu
         });
       }
     });
-    console.log(`Auto-Save exitoso: Pregunta ${idPregunta} -> ${valor}`);
   } catch (error) {
     console.error("Error crítico en Auto-Save:", error);
   }

@@ -10,5 +10,6 @@ export class CatalogoOpcion extends Model {
   @field('codigo_catalogo') codigoCatalogo!: string;
   @field('codigo_opcion') codigoOpcion!: string;
   @text('valor_opcion') valorOpcion!: string;
-  @field('id_padre_opcion') idPadreOpcion?: string;
+  // isOptional en el schema de WatermelonDB persiste NULL, no undefined.
+  @field('id_padre_opcion') idPadreOpcion!: string | null;
 }

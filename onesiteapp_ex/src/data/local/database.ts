@@ -18,8 +18,8 @@ import LocalClientePendiente from './models/LocalClientePendiente';
 // 1. Configurar el adaptador para SQLite
 const adapter = new SQLiteAdapter({
   schema,
-  // (Opcional) Migraciones: las configuraremos en el futuro si el esquema cambia
-  //migrations,
+  // Migraciones para control de evolución del esquema local de base de datos
+  migrations,
   jsi: false, // Habilita JSI para un rendimiento 2x-3x más rápido en Android/iOS
   onSetUpError: error => {
     console.error('Error al configurar la base de datos local:', error);

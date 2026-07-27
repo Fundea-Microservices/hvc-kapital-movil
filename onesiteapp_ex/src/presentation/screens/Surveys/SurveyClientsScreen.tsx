@@ -8,17 +8,18 @@ import { Q } from '@nozbe/watermelondb';
 import LocalClientePendiente from '../../../data/local/models/LocalClientePendiente';
 import LocalEncuesta from '../../../data/local/models/LocalEncuesta';
 import { useNavigation } from '@react-navigation/native';
+import type { NavegacionApp, RutaDe } from '../../navigation/types';
 // @ts-ignore
 import uuid from 'react-native-uuid';
 
 interface Props {
   clientes: LocalClientePendiente[];
   encuesta: LocalEncuesta | null; // 
-  route: any; 
+  route: RutaDe<'SurveyClients'>;
 }
 
 const SurveyClients = ({ clientes, encuesta, route }: Props) => {
-  const navigation = useNavigation<any>();
+  const navigation = useNavigation<NavegacionApp>();
   const [selectedCliente, setSelectedCliente] = useState<LocalClientePendiente | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [motivoCancelacion, setMotivoCancelacion] = useState('');

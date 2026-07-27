@@ -21,8 +21,8 @@ export const evaluarSintaxis = (sintaxis: string, respuestas: DiccionarioRespues
         // Extraer el ID sin corchetes
         const idPregunta = placeholder.replace(/[\[\]]/g, '');
         // Obtener el valor de las respuestas actuales o '0' si está vacío
-        const valorReal = respuestas[idPregunta] || '0'; 
-        
+        const valorReal = respuestas[idPregunta] || '0';
+
         // Reemplazar en la expresión
         expresionFinal = expresionFinal.replace(placeholder, valorReal);
       });
@@ -31,7 +31,7 @@ export const evaluarSintaxis = (sintaxis: string, respuestas: DiccionarioRespues
     // 2. Evaluar de forma segura la expresión matemática (Ej: "45.5 + 10")
     // Se usa Function en lugar de eval() por seguridad de scope
     const resultado = new Function(`return ${expresionFinal}`)();
-    
+
     return isNaN(resultado) ? null : Number(resultado);
   } catch (error) {
     console.warn(`Error evaluando sintaxis: ${sintaxis}`, error);
@@ -55,7 +55,7 @@ export const evaluarVisibilidad = (regla: string, respuestas: DiccionarioRespues
         // Si es texto, se debe envolver en comillas para la evaluación lógica
         let valorReal = respuestas[idPregunta] || '';
         if (isNaN(Number(valorReal))) {
-            valorReal = `'${valorReal}'`;
+          valorReal = `'${valorReal}'`;
         }
         expresionFinal = expresionFinal.replace(placeholder, valorReal);
       });

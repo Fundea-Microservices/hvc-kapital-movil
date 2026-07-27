@@ -19,9 +19,7 @@ const AccordionItem = ({ menuPadre, hijos }: AccordionItemProps) => {
   const isLeaf = hijos.length === 0;
 
   const handlePress = () => {
-    if (isLeaf) {
-      console.log(`Navegando a: ${menuPadre.ruta_pantalla}`);
-    } else {
+    if (!isLeaf) {
       setExpanded(!expanded);
     }
   };
@@ -44,9 +42,9 @@ const AccordionItem = ({ menuPadre, hijos }: AccordionItemProps) => {
       {expanded ? (
         hijos.map((hijo) => (
           <TouchableOpacity 
-            key={hijo.id} 
-            style={styles.childRow} 
-            onPress={() => console.log(`Navegando a: ${hijo.ruta_pantalla}`)}
+            key={hijo.id}
+            style={styles.childRow}
+            onPress={() => { }}
           >
             <Text style={styles.childText}>{hijo.titulo}</Text>
           </TouchableOpacity>

@@ -11,7 +11,6 @@ export const wipeLocalDatabase = async () => {
       // Esta función vacía la base de datos completa de WatermelonDB de golpe
       await database.unsafeResetDatabase();
     });
-    console.log("WIPE COMPLETADO: Base de datos SQLite local destruida.");
   } catch (error) {
     console.error("Error crítico al intentar destruir la base de datos:", error);
   }

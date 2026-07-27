@@ -1,17 +1,12 @@
 import axios, { AxiosRequestConfig, InternalAxiosRequestConfig }  from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import * as Application from 'expo-application';
 import { Alert } from 'react-native';
 import { useAuthStore } from '../../presentation/store/useAuthStore';
-import { wipeLocalDatabase } from '../../data/local/services/database.service'; 
-
-console.log(" URL BASE CARGADA DESDE .ENV:", process.env.EXPO_PUBLIC_API_URL);
-console.log(" URL BASE CARGADA DESDE .ENV:",  process.env.EXPO_PUBLIC_API_CATALOGOS_URL);
+import { wipeLocalDatabase } from '../../data/local/services/database.service';
 
 const baseURL = process.env.EXPO_PUBLIC_API_URL;
 const baseCatalogosURL = process.env.EXPO_PUBLIC_API_CATALOGOS_URL;
-
-console.log(" URL BASE CARGADA DESDE baseURL:", baseURL);
-console.log(" URL BASE CARGADA DESDE baseCatalogosURL:", process.env.EXPO_PUBLIC_API_CATALOGOS_URL);
 
 // Instancia Central (Microservicio de Encuestas - Puerto 5030)
 export const apiClient = axios.create({
@@ -34,14 +29,7 @@ export const apiClientCatalogos = axios.create({
 // ============================================================================
 const requestInterceptorInterceptor = async (config: InternalAxiosRequestConfig) => {
  
-    // A. Logs de la petición
-    const fullUrl = `${config.baseURL || ''}${config.url || ''}`;
-    console.log(` [AXIOS INIT] -> MÉTODO: ${config.method?.toUpperCase()} | URL EXACTA: ${fullUrl}`);
-    if (config.data) {
-      console.log(` [PAYLOAD ENVIADO]:`, JSON.stringify(config.data, null, 2));
-    }
-
-    // B. Inyección de Tokens
+    // Inyección de Tokens
     const deviceToken = await SecureStore.getItemAsync('deviceToken');
     const sessionToken = await SecureStore.getItemAsync('token_sesion');
     const userId = await SecureStore.getItemAsync('user_id');
@@ -56,7 +44,10 @@ const requestInterceptorInterceptor = async (config: InternalAxiosRequestConfig)
     config.headers['x-user-id'] = userId;
     config.headers['user-id'] = userId;
   }
-  
+
+  // Versión de la app: permite al servidor denegar deltas si es obsoleta (Anexo 1, 4.4).
+  config.headers['x-app-version'] = Application.nativeApplicationVersion || '1.0.0';
+
   return config;
 };
 
@@ -65,9 +56,15 @@ apiClientCatalogos.interceptors.request.use(requestInterceptorInterceptor, (erro
 
 // Variables para evitar múltiples llamadas de refresh simultáneas
 let isRefreshing = false;
-let failedQueue: any[] = [];
+/** Petición en espera mientras se refresca el token (patrón single-flight). */
+interface PeticionEnEspera {
+  resolve: (token: unknown) => void;
+  reject: (error: unknown) => void;
+}
 
-const processQueue = (error: any, token: string | null = null) => {
+let failedQueue: PeticionEnEspera[] = [];
+
+const processQueue = (error: unknown, token: string | null = null) => {
   failedQueue.forEach(prom => {
     if (error) { prom.reject(error); } 
     else { prom.resolve(token); }
@@ -78,21 +75,21 @@ const processQueue = (error: any, token: string | null = null) => {
 // ============================================================================
 // 2. INTERCEPTOR DE RESPUESTAS (Unificado: Logs + Refresh Token + 403)
 // ============================================================================
-const responseInterceptorInterceptor = async (error: any) => {
-  const originalRequest = error.config;
-  const currentInstance = originalRequest?.baseURL === baseCatalogosURL ? apiClientCatalogos : apiClient;
-  
-  // A. Logs de Error Forense en Red
-  const fullUrl = `${originalRequest?.baseURL || ''}${originalRequest?.url || ''}`;
-  console.log(`❌ [AXIOS ERROR] -> FALLÓ LA RUTA: ${fullUrl} | STATUS: ${error.response?.status}`);
-  console.log(`[DETALLE]:`, error.message);
+const responseInterceptorInterceptor = async (error: unknown) => {
+  // Axios no garantiza la forma del error (puede ser de red, de config o del servidor);
+  // se descarta todo lo que no sea un AxiosError antes de inspeccionarlo.
+  if (!axios.isAxiosError(error)) return Promise.reject(error);
 
-  // B. SPRINT 2: Manejo de Expiración de Token (HTTP 401)
+  const originalRequest = error.config as (InternalAxiosRequestConfig & { _retry?: boolean }) | undefined;
+  const currentInstance = originalRequest?.baseURL === baseCatalogosURL ? apiClientCatalogos : apiClient;
+  if (!originalRequest) return Promise.reject(error);
+
+  // SPRINT 2: Manejo de Expiración de Token (HTTP 401)
   if (error.response?.status === 401 && !originalRequest._retry) {
     
     // Se omiten rutas críticas de autenticación inicial para evitar bucles ciclistas
     const excludedUrls = ['/auth/login', '/devices/enroll'];
-    if (excludedUrls.includes(originalRequest.url)) {
+    if (excludedUrls.includes(originalRequest.url ?? '')) {
       return Promise.reject(error);
     }
 
