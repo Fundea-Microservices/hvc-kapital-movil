@@ -3,6 +3,20 @@ import { database } from '../database';
 import { apiClient, apiClientCatalogos } from '../../../core/network/apiClient';
 import { Database, Q } from '@nozbe/watermelondb';
 import { useAuthStore } from '../../../presentation/store/useAuthStore';
+import MetadataSync from '../models/MetadataSync';
+import LocalCaptura from '../models/LocalCaptura';
+import { CatalogoOpcion } from '../models/CatalogoOpcion';
+import { obtenerParametroNumerico } from './parametros.service';
+import { leerRaw, type RawMetadataSync, type RawCaptura } from '../types/raw.types';
+import {
+  esFilaServidor,
+  obtenerCambiosTabla,
+  textoDe,
+  numeroDe,
+  banderaDe,
+  type FilaServidor,
+} from '../../remote/types/sync.types';
+import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
 
 // ============================================================================
@@ -10,11 +24,63 @@ import axios from 'axios';
 // ============================================================================
 let isSyncRunning = false;
 
-export const runFullSync = async () => {
-  console.log(' [SYNC] Iniciando sincronización...');
+// Tablas cuyo ciclo de sincronización se audita contra el servidor (Regla 5.5):
+// la fecha local por tabla solo avanza cuando el ACK es confirmado.
+const TABLAS_AUDITADAS = [
+  'cat_menu_appex',
+  'cat_parametros_appex',
+  'local_estructura_pregunta',
+  'local_catalogo_opciones',
+];
 
+/** Lee de metadata_sync la última fecha confirmada por tabla (ISO) para enviar deltas reales. */
+const leerFechasSyncPorTabla = async (): Promise<Record<string, string | null>> => {
+  const mapa: Record<string, string | null> = {};
+  try {
+    const rows = await database.collections.get<MetadataSync>('metadata_sync').query().fetch();
+    rows.forEach((r) => {
+      const raw = leerRaw<RawMetadataSync>(r);
+      if (raw.tabla_nombre && raw.fecha_ultima_sinc) {
+        mapa[raw.tabla_nombre] = new Date(raw.fecha_ultima_sinc).toISOString();
+      }
+    });
+  } catch (e) {
+    console.warn('[SYNC] No se pudieron leer fechas por tabla de metadata_sync:', e);
+  }
+  return mapa;
+};
+
+/**
+ * Confirma al servidor cada tabla sincronizada (POST /sync/ack → Log_Sincronizacion_AppEx)
+ * y SOLO si el ACK es exitoso avanza la fecha local en metadata_sync (Regla 5.5).
+ * Si un ACK falla, la fecha no avanza y el próximo sync re-pide esos deltas (upsert inocuo).
+ */
+const confirmarYSellarSincronizacion = async () => {
+  const ahora = new Date();
+  for (const tabla of TABLAS_AUDITADAS) {
+    try {
+      await apiClient.post('/sync/ack', { tablaNombre: tabla, exitoso: true });
+
+      await database.write(async () => {
+        const coleccion = database.collections.get<MetadataSync>('metadata_sync');
+        const existentes = await coleccion.query(Q.where('tabla_nombre', tabla)).fetch();
+        if (existentes.length > 0) {
+          await existentes[0].update((r: MetadataSync) => { r.fecha_ultima_sinc = ahora; });
+        } else {
+          await coleccion.create((r: MetadataSync) => {
+            r.tabla_nombre = tabla;
+            r.fecha_ultima_sinc = ahora;
+          });
+        }
+      });
+    } catch (e) {
+      console.warn(`[SYNC ACK] No se pudo confirmar "${tabla}"; su fecha local no avanza:`, e);
+    }
+  }
+};
+
+export const runFullSync = async () => {
   if (isSyncRunning) {
-    console.log(' [SYNC] Sincronización ya en curso. Ignorando petición.');
     return;
   }
   isSyncRunning = true; // Cerramos el candado
@@ -24,34 +90,32 @@ export const runFullSync = async () => {
     // =======================================================================
     // FASE 1: SUBIDA MANUAL DE ENCUESTAS (TOTALMENTE FUERA DEL PUSH NATIVO)
     // =======================================================================
-    console.log(' [SYNC PUSH MANUAL] Buscando capturas locales pendientes...');
-    const capturaCollection = database.collections.get('local_captura');
-    
+    const capturaCollection = database.collections.get<LocalCaptura>('local_captura');
+
     // Buscamos SOLO las que están pendientes (estado_sincro = 0)
     const capturasPendientes = await capturaCollection.query(Q.where('estado_sincro', 0)).fetch();
 
     if (capturasPendientes.length > 0) {
-      const encuestasAgrupadas: Record<string, any[]> = {};
+      const encuestasAgrupadas: Record<string, LocalCaptura[]> = {};
 
-      capturasPendientes.forEach((cap: any) => {
+      capturasPendientes.forEach((cap) => {
         // Obtenemos solo el UUID Base para agrupar TODA la encuesta
         const uuidCompleto = cap.uuid_instancia || '';
-        const uuidBase = uuidCompleto.split('_')[0]; 
+        const uuidBase = uuidCompleto.split('_')[0];
 
         if (!encuestasAgrupadas[uuidBase]) encuestasAgrupadas[uuidBase] = [];
         encuestasAgrupadas[uuidBase].push(cap);
       });
 
       for (const [uuidBase, respuestas] of Object.entries(encuestasAgrupadas)) {
-        const authState = useAuthStore.getState() as any;
-        const userIdRaw = authState.userId || authState.user?.id || authState.id;
-        
+        const userIdRaw = useAuthStore.getState().userId;
+
         if (!userIdRaw) {
           console.error("❌ CRÍTICO: No se encontró el ID del usuario en el estado global.");
           throw new Error(`Falta el ID del usuario logueado en Zustand.`);
         }
 
-        const userId = Number(userIdRaw); 
+        const userId = Number(userIdRaw);
         const idEncuesta = respuestas[0].id_encuesta;
 
         // DEFENSIVO GEOLOCALIZACIÓN
@@ -73,15 +137,22 @@ export const runFullSync = async () => {
           }
         }
 
+        // C. Corrección del Túnel de Sincronización: Se extraen los valores de telemetría reales persistidos en SQLite
+        // en lugar de inyectar marcas de tiempo del momento del envío.
+        // Programación defensiva: fallback a la hora actual en caso de valores nulos.
+        const fechaInicioReal = respuestas.find(r => r.fecha_inicio)?.fecha_inicio;
+        const fechaFinReal = respuestas.find(r => r.fecha_fin)?.fecha_fin;
+
         const payload = {
           idEncuesta: Number(idEncuesta),
-          IdUsuario: userId, 
+          IdUsuario: userId,
           idUsuario: userId,
           latitud: latitudEnvio,
           longitud: longitudEnvio,
-          fechaInicio: new Date().toISOString(),
-          fechaFin: new Date().toISOString(),
-          dispositivoId: 'ONE_SITE_SGRAS',
+          fechaInicio: fechaInicioReal || new Date().toISOString(),
+          fechaFin: fechaFinReal || new Date().toISOString(),
+          // Identificador real del móvil para auditoría (Ticket 1: DispositivoID).
+          dispositivoId: (await SecureStore.getItemAsync('deviceToken')) || 'ONE_SITE_SGRAS',
           respuestas: respuestas.map(r => ({
             idPregunta: Number(r.id_pregunta),
             uuidInstancia: r.uuid_instancia,
@@ -99,11 +170,9 @@ export const runFullSync = async () => {
           }
         };
 
-        console.log(` [SYNC PUSH MANUAL] Enviando payload para UUID Base ${uuidBase}:`, JSON.stringify(payload, null, 2));
-
         try {
           await apiClient.post('/surveys/submit', payload, config);
-          
+
           // AHORA SÍ: Como estamos fuera del synchronize, WatermelonDB permite escribir sin problemas
           await database.write(async () => {
             const registrosActualizar = await capturaCollection.query(
@@ -111,22 +180,22 @@ export const runFullSync = async () => {
               Q.where('estado_sincro', 0)
             ).fetch();
 
-            const updates = registrosActualizar.map((registro: any) =>
-              registro.prepareUpdate((rec: any) => {
+            const updates = registrosActualizar.map((registro) =>
+              registro.prepareUpdate((rec: LocalCaptura) => {
                 rec.estado_sincro = 1; // Marcado definitivo
               })
             );
             await database.batch(...updates);
           });
-          console.log(`[SYNC PUSH MANUAL] Captura ${uuidBase} sincronizada y marcada con éxito.`);
-        } catch (err: any) {
-          const mensajeBackend = err.response?.data?.message || err.message;
+        } catch (err: unknown) {
+          // Axios no garantiza la forma del error: se inspecciona defensivamente.
+          const mensajeBackend = axios.isAxiosError(err)
+            ? (textoDe((err.response?.data ?? {}) as FilaServidor, 'message') ?? err.message)
+            : err instanceof Error ? err.message : String(err);
           console.error(`❌ [SYNC PUSH ERROR] Fallo al subir UUID ${uuidBase}. Detalle:`, mensajeBackend);
           // Omitimos lanzar el throw para que intente subir las demás encuestas agrupadas si hay varias
         }
       }
-    } else {
-      console.log('[SYNC PUSH MANUAL] No hay encuestas pendientes de envío.');
     }
 
     // =======================================================================
@@ -135,91 +204,97 @@ export const runFullSync = async () => {
     await synchronize({
       database,
       pullChanges: async ({ lastPulledAt }) => {
-        console.log('[SYNC PULL] Obteniendo cambios del servidor...');
         const syncDate = lastPulledAt ? new Date(lastPulledAt).toISOString() : null;
+        // Fechas REALES por tabla (última sincronización confirmada con ACK).
+        // Fallback a la fecha global de WatermelonDB para instalaciones previas.
+        const fechasPorTabla = await leerFechasSyncPorTabla();
 
         const [coreRes, structureRes, catalogsRes] = await Promise.all([
-          apiClient.post('/sync/deltas', { lastSyncDates: { cat_menu_appex: syncDate, cat_parametros_appex: syncDate } }),
-          apiClient.post('/surveys/structure', { lastSyncDate: syncDate }),
+          apiClient.post('/sync/deltas', {
+            lastSyncDates: {
+              cat_menu_appex: fechasPorTabla['cat_menu_appex'] ?? syncDate,
+              cat_parametros_appex: fechasPorTabla['cat_parametros_appex'] ?? syncDate,
+            }
+          }),
+          apiClient.post('/surveys/structure', { lastSyncDate: fechasPorTabla['local_estructura_pregunta'] ?? syncDate }),
           apiClient.post('/surveys/catalogs', { lastSyncDate: syncDate })
         ]);
 
-        const structChanges = structureRes.data?.changes || {};
-        const coreChanges = coreRes.data?.changes || {};
-        const catChanges = catalogsRes.data?.changes || {};
+        // Las respuestas HTTP son impredecibles: se tratan como `unknown` y se
+        // normalizan con los lectores defensivos de sync.types.
+        const structChanges: unknown = structureRes.data?.changes ?? {};
+        const coreChanges: unknown = coreRes.data?.changes ?? {};
+        const catChanges: unknown = catalogsRes.data?.changes ?? {};
 
-        const getTableData = (obj: any, posiblesNombres: string[]) => {
-          for (const nombre of posiblesNombres) {
-            if (obj[nombre]) return obj[nombre];
-          }
-          return { created: [], updated: [], deleted: [] };
-        };
-
-        const encuestasServidor = structChanges.local_encuesta?.created || [];
-        const seccionesServidor = structChanges.local_seccion?.created || [];
-        const preguntasServidor = structChanges.local_estructura_pregunta?.created || [];
+        const encuestasServidor = obtenerCambiosTabla(structChanges, 'local_encuesta').created;
+        const seccionesServidor = obtenerCambiosTabla(structChanges, 'local_seccion').created;
+        const preguntasServidor = obtenerCambiosTabla(structChanges, 'local_estructura_pregunta').created;
 
         const mergedChanges = {
-          ...coreChanges,
-          ...catChanges,
+          ...(esFilaServidor(coreChanges) ? coreChanges : {}),
+          ...(esFilaServidor(catChanges) ? catChanges : {}),
 
           local_encuesta: {
-            created: encuestasServidor.map((row: any) => ({
-              id: row.id?.toString(),
-              nombre: row.nombre || 'Sin nombre',
-              version_activa: row.version_activa || 1,
+            created: encuestasServidor.map((row) => ({
+              id: textoDe(row, 'id'),
+              nombre: textoDe(row, 'nombre') ?? 'Sin nombre',
+              version_activa: numeroDe(row, 1, 'version_activa'),
               estado: 1,
-              orden: row.orden || 1,
-              fecha_modificacion: row.fecha_modificacion || new Date().toISOString()
+              orden: numeroDe(row, 1, 'orden'),
+              fecha_modificacion: textoDe(row, 'fecha_modificacion') ?? new Date().toISOString()
             })),
             updated: [], deleted: []
           },
 
           local_seccion: {
-            created: seccionesServidor.map((row: any) => ({
-              id: row.id?.toString(),
-              id_encuesta: row.id_encuesta?.toString(),
-              titulo:  row.titulo || row.nombre || 'Sección',
-              orden: row.orden || 1
+            created: seccionesServidor.map((row) => ({
+              id: textoDe(row, 'id'),
+              id_encuesta: textoDe(row, 'id_encuesta'),
+              titulo: textoDe(row, 'titulo', 'nombre') ?? 'Sección',
+              orden: numeroDe(row, 1, 'orden')
             })),
             updated: [], deleted: []
           },
 
           local_estructura_pregunta: {
-            created: preguntasServidor.map((row: any) => {
-              const seccionPadre = seccionesServidor.find((s: any) => s.id?.toString() === row.id_seccion?.toString());
-              const idEncuestaReal = row.id_encuesta?.toString() || seccionPadre?.id_encuesta?.toString();
+            created: preguntasServidor.map((row) => {
+              const idSeccion = textoDe(row, 'id_seccion');
+              const seccionPadre = seccionesServidor.find(s => textoDe(s, 'id') === idSeccion);
+              const idEncuestaReal = textoDe(row, 'id_encuesta')
+                ?? (seccionPadre ? textoDe(seccionPadre, 'id_encuesta') : null);
 
+              // Cada campo acepta las tres cajas que emite el BackOffice.
               return {
-                id: row.id?.toString(),
-                id_seccion: row.id_seccion?.toString(),
-                id_encuesta: idEncuestaReal, 
-                id_matriz_padre: row.id_matriz_padre?.toString() || null,
-                sintaxis_calculo: row.sintaxis_calculo || row.sintaxisCalculo || null,
-                regla_visibilidad: row.regla_visibilidad || row.reglaVisibilidad || null,
-                regla_validacion: row.regla_validacion || row.reglaValidacion || null,
-                etiqueta: row.etiqueta || row.Etiqueta || 'Sin etiqueta',
-                tipo_dato: row.tipo_dato || row.tipoDato || 'TEXTO',
-                opciones: row.opciones || row.Opciones || null,
-                origen_datos_tipo: row.origen_datos_tipo || row.origenDatosTipo || row.origen_datos_tipo || null,
-                origen_datos_cmd: row.origen_datos_cmd || row.origenDatosCmd || row.origen_datos_cmd || null,
-                es_editable: (row.es_editable === 1 || row.esEditable === 1) ? 1 : 0,
-                es_visible_default: (row.es_visible_default === 1 || row.esVisibleDefault === 1) ? 1 : 0,
-                es_obligatorio: (row.es_obligatorio === 1 || row.EsObligatorio === 1 || row.esObligatorio === 1) ? 1 : 0,
-                orden: row.orden || 1,
+                id: textoDe(row, 'id'),
+                id_seccion: idSeccion,
+                id_encuesta: idEncuestaReal,
+                id_matriz_padre: textoDe(row, 'id_matriz_padre', 'idMatrizPadre', 'IdMatrizPadre'),
+                sintaxis_calculo: textoDe(row, 'sintaxis_calculo', 'sintaxisCalculo', 'SintaxisCalculo'),
+                regla_visibilidad: textoDe(row, 'regla_visibilidad', 'reglaVisibilidad', 'ReglaVisibilidad'),
+                regla_validacion: textoDe(row, 'regla_validacion', 'reglaValidacion', 'ReglaValidacion'),
+                etiqueta: textoDe(row, 'etiqueta', 'Etiqueta') ?? 'Sin etiqueta',
+                tipo_dato: textoDe(row, 'tipo_dato', 'tipoDato', 'TipoDato') ?? 'TEXTO',
+                opciones: textoDe(row, 'opciones', 'Opciones'),
+                origen_datos_tipo: textoDe(row, 'origen_datos_tipo', 'origenDatosTipo', 'OrigenDatosTipo'),
+                origen_datos_cmd: textoDe(row, 'origen_datos_cmd', 'origenDatosCmd', 'OrigenDatosCmd'),
+                es_editable: banderaDe(row, 'es_editable', 'esEditable', 'EsEditable'),
+                es_visible_default: banderaDe(row, 'es_visible_default', 'esVisibleDefault', 'EsVisibleDefault'),
+                es_obligatorio: banderaDe(row, 'es_obligatorio', 'esObligatorio', 'EsObligatorio'),
+                orden: numeroDe(row, 1, 'orden', 'Orden'),
               };
             }),
             updated: [], deleted: []
           },
 
           cat_menu_appex: {
-            created: getTableData(coreChanges, ['cat_menu_appex', 'Cat_Menu_AppEx']).created.map((row: any) => ({
-              id: row.IdMenu?.toString() || row.id?.toString(),
-              titulo: row.Titulo || row.titulo || row.Nombre || 'Sin Título',
-              icono: row.Icono || row.icono || 'folder',
-              orden: row.Orden || row.orden || 1,
-              ruta_pantalla: row.RutaPantalla || row.ruta_pantalla || null,
-              id_padre: row.IdPadre ?? row.id_padre ?? null,
+            created: obtenerCambiosTabla(coreChanges, 'cat_menu_appex', 'Cat_Menu_AppEx').created.map((row) => ({
+              id: textoDe(row, 'IdMenu', 'id'),
+              titulo: textoDe(row, 'Titulo', 'titulo', 'Nombre') ?? 'Sin Título',
+              icono: textoDe(row, 'Icono', 'icono') ?? 'folder',
+              orden: numeroDe(row, 1, 'Orden', 'orden'),
+              ruta_pantalla: textoDe(row, 'RutaPantalla', 'ruta_pantalla'),
+              id_padre: textoDe(row, 'IdPadre', 'id_padre'),
+              id_permiso_requerido: textoDe(row, 'IdPermisoRequerido', 'idPermisoRequerido', 'id_permiso_requerido'),
             })),
             updated: [], deleted: []
           },
@@ -233,27 +308,29 @@ export const runFullSync = async () => {
 
       // FIX CLAVE: Se deja el pushChanges nativo VACÍO para evitar colisiones
       pushChanges: async () => {
-         // Ya hicimos el push manual en la Fase 1. Dejamos esto vacío para no bloquear WatermelonDB.
+        // Ya hicimos el push manual en la Fase 1. Dejamos esto vacío para no bloquear WatermelonDB.
       },
     });
-    
-    console.log("Sincronización base exitosa");
 
     // ========================================================================
     // 3. DESCARGA AUTOMÁTICA DE CATÁLOGOS
     // ========================================================================
     const token = useAuthStore.getState().token;
     if (token) {
-      console.log('[SYNC] Iniciando descarga automática de catálogos maestros...');
       await sincronizarCatalogos(database, token);
     }
+
+    // ========================================================================
+    // 4. CONFIRMACIÓN (ACK) Y SELLADO DE FECHAS POR TABLA — Regla 5.5
+    // ========================================================================
+    await confirmarYSellarSincronizacion();
 
   } catch (error) {
     console.error("❌ Error crítico durante la sincronización:", error);
     throw error;
   }
   finally {
-    isSyncRunning = false; 
+    isSyncRunning = false;
   }
 };
 
@@ -263,29 +340,31 @@ export const runFullSync = async () => {
 export const sincronizarCatalogos = async (databaseInstance: Database, token: string) => {
   // endpoint esperado: process.env.EXPO_PUBLIC_API_URL + '/catalogo-opcion/maestros'
   try {
-    const limit = 250;
+    // Parametrizable desde el BackOffice (Cat_Parametros_AppEx) sin publicar nueva versión.
+    const limit = await obtenerParametroNumerico('SYNC_CATALOGOS_LIMIT', 250);
     let page = 1;
     let keepFetching = true;
-    let allCatalogosRemotos: any[] = [];
+    let allCatalogosRemotos: FilaServidor[] = [];
 
     // El sistema ejecuta un ciclo iterativo para consumir todas las páginas disponibles
     while (keepFetching) {
-      console.log(`[SYNC CATALOGOS] Solicitando página ${page} (Límite: ${limit})...`);
-      
       // Se utiliza el cliente global configurado de Axios omitiendo URLs expuestas
-      const response = await apiClientCatalogos.get(`/catalogo-opcion/maestros?page=${page}&limit=${limit}`, {
+      const response = await apiClientCatalogos.get<unknown>(`/catalogo-opcion/maestros?page=${page}&limit=${limit}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      const catalogosRemotos = response.data?.data;
+      // La respuesta llega sin tipar: se valida su forma antes de acumularla.
+      const cuerpo = response.data;
+      const datos = esFilaServidor(cuerpo) ? cuerpo.data : null;
+      const catalogosRemotos: FilaServidor[] = Array.isArray(datos) ? datos.filter(esFilaServidor) : [];
 
       // Validación de ruptura: si no hay más registros, se detiene el ciclo
-      if (!catalogosRemotos || catalogosRemotos.length === 0) {
+      if (catalogosRemotos.length === 0) {
         keepFetching = false;
       } else {
         // Se acumulan los registros de forma secuencial en memoria temporal
         allCatalogosRemotos = [...allCatalogosRemotos, ...catalogosRemotos];
-        
+
         // Si la página actual devolvió menos registros que el límite, se asume que es la última
         if (catalogosRemotos.length < limit) {
           keepFetching = false;
@@ -301,32 +380,29 @@ export const sincronizarCatalogos = async (databaseInstance: Database, token: st
       return;
     }
 
-    console.log(`[SQLITE] Procesando escritura atómica de ${allCatalogosRemotos.length} registros...`);
-
-    const catalogoCollection = databaseInstance.collections.get('local_catalogo_opciones');
+    const catalogoCollection = databaseInstance.collections.get<CatalogoOpcion>('local_catalogo_opciones');
 
     // Se abre un bloque de escritura único para garantizar la atomicidad (Todo o Nada)
     await databaseInstance.write(async () => {
       // El sistema purga los registros obsoletos anteriores para evitar duplicados residuales
       const existentes = await catalogoCollection.query().fetch();
-      const registrosBorrados = existentes.map((r: any) => r.prepareDestroyPermanently());
-      
+      const registrosBorrados = existentes.map((r) => r.prepareDestroyPermanently());
+
       // Mapeo estructurado de la carga útil hacia el esquema local de SQLite
-      const nuevosRegistros = allCatalogosRemotos.map((cat: any) => 
-        catalogoCollection.prepareCreate((record: any) => {
-          record.idRemoto = cat.id?.toString() || '';
-          record.nombreCatalogo = cat.nombre_catalogo || '';
-          record.codigoCatalogo = cat.codigo_catalogo || '';
-          record.codigoOpcion = cat.codigo_opcion || '';
-          record.valorOpcion = cat.valor_opcion || '';
-          record.idPadreOpcion = cat.id_padre_opcion || null;
+      const nuevosRegistros = allCatalogosRemotos.map((cat) =>
+        catalogoCollection.prepareCreate((record: CatalogoOpcion) => {
+          record.idRemoto = textoDe(cat, 'id') ?? '';
+          record.nombreCatalogo = textoDe(cat, 'nombre_catalogo') ?? '';
+          record.codigoCatalogo = textoDe(cat, 'codigo_catalogo') ?? '';
+          record.codigoOpcion = textoDe(cat, 'codigo_opcion') ?? '';
+          record.valorOpcion = textoDe(cat, 'valor_opcion') ?? '';
+          record.idPadreOpcion = textoDe(cat, 'id_padre_opcion');
         })
       );
 
       // Transacción en bloque de alta velocidad mediante el motor de WatermelonDB
       await databaseInstance.batch(registrosBorrados.concat(nuevosRegistros));
     });
-    console.log(`[SQLITE] ${allCatalogosRemotos.length} Catálogos maestros guardados para uso sin conexión.`);
   } catch (error) {
     console.error('❌ Error en el servicio de sincronización de catálogos:', error);
   }
