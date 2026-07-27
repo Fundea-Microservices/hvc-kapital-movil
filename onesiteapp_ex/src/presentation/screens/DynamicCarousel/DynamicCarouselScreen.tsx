@@ -4,27 +4,73 @@ import axios from 'axios';
 
 const { width } = Dimensions.get('window');
 // Tarjeta al 85% de la pantalla para que asome la siguiente
-const CARD_WIDTH = width * 0.85; 
+const CARD_WIDTH = width * 0.85;
 // 16 equivale al mr-4 de Tailwind
-const CARD_MARGIN = 16; 
+const CARD_MARGIN = 16;
+
+/**
+ * URL del servicio de configuración (banners del carrusel). Se toma del entorno
+ * para no acoplar la app a una IP de red interna: una IP quemada hace que el
+ * carrusel solo funcione dentro de esa red y falle siempre en campo.
+ */
+const CARRUSEL_API_URL = process.env.EXPO_PUBLIC_API_CARRUSEL_URL;
+
+/** Contrato del banner tal como lo expone el servicio de configuración. */
+interface BannerCarrusel {
+  carouselId: string;
+  titulo: string;
+  subtitulo: string | null;
+  descripcion: string | null;
+  fotoUrl: string | null;
+  redireccionUrl: string | null;
+  fechaInicio: string | null;
+  orden: number;
+  activo: boolean;
+  visibleApp: boolean;
+}
+
+/**
+ * Type guard defensivo: la respuesta HTTP es impredecible, por lo que cada
+ * elemento se valida antes de incorporarlo al estado.
+ */
+const esBannerValido = (dato: unknown): dato is BannerCarrusel => {
+  if (typeof dato !== 'object' || dato === null) return false;
+  const posible = dato as Record<string, unknown>;
+  return typeof posible.carouselId === 'string' && typeof posible.titulo === 'string';
+};
 
 export const DynamicCarousel = () => {
-  const [carousels, setCarousels] = useState<any[]>([]);
+  const [carousels, setCarousels] = useState<BannerCarrusel[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentIndex, setCurrentIndex] = useState(0);
-  
+
   // El "control remoto" para mover el carrusel automáticamente
-  const flatListRef = useRef<FlatList>(null);
+  const flatListRef = useRef<FlatList<BannerCarrusel>>(null);
 
   // 1. Efecto para descargar los datos
   useEffect(() => {
     const fetchCarousel = async () => {
+      // Sin configuración de entorno el componente se degrada en silencio
+      // (no renderiza) en lugar de intentar una IP inexistente.
+      if (!CARRUSEL_API_URL) {
+        console.warn('[CARRUSEL] EXPO_PUBLIC_API_CARRUSEL_URL no está definida; el carrusel no se mostrará.');
+        setLoading(false);
+        return;
+      }
+
       try {
-        const response = await axios.get('http://172.25.5.11:3000/api/config/carousel');
-        if (response.data && response.data.success) {
-          const activos = response.data.data.filter((c: any) => c.activo && c.visibleApp);
-          const ordenados = activos.sort((a: any, b: any) => a.orden - b.orden);
-          setCarousels(ordenados);
+        const response = await axios.get<unknown>(`${CARRUSEL_API_URL}/config/carousel`);
+        const cuerpo = response.data;
+
+        if (typeof cuerpo === 'object' && cuerpo !== null) {
+          const posible = cuerpo as Record<string, unknown>;
+          if (posible.success === true && Array.isArray(posible.data)) {
+            const activos = posible.data
+              .filter(esBannerValido)
+              .filter((banner) => banner.activo && banner.visibleApp)
+              .sort((a, b) => a.orden - b.orden);
+            setCarousels(activos);
+          }
         }
       } catch (error) {
         console.error('❌ Error API Carrusel:', error);
@@ -56,10 +102,11 @@ export const DynamicCarousel = () => {
     return () => clearInterval(timer);
   }, [currentIndex, carousels.length]);
 
-  const resolveImageUrl = (url: string) => {
+  const resolveImageUrl = (url: string | null): string => {
     if (!url) return 'https://via.placeholder.com/400x200?text=Sin+Imagen';
     if (url.startsWith('http')) return url;
-    return `http://172.25.5.11:3000/api/config/carousel/imagen?fotoUrl=${encodeURIComponent(url)}`;
+    if (!CARRUSEL_API_URL) return 'https://via.placeholder.com/400x200?text=Sin+Imagen';
+    return `${CARRUSEL_API_URL}/config/carousel/imagen?fotoUrl=${encodeURIComponent(url)}`;
   };
 
   if (loading) {
