@@ -10,4 +10,6 @@ export default class CatMenu extends Model {
   @field('orden') orden!: number;
   @field('seccion') seccion!: string;
   @field('ruta_pantalla') ruta_pantalla!: string | null;
+  // NULL = visible para todos; con valor, se exige el permiso en permisos_json.
+  @field('id_permiso_requerido') id_permiso_requerido!: string | null;
 }

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
 import * as Application from 'expo-application';
 import { apiClient } from './src/core/network/apiClient';
+import { SyncOnReconnect } from './src/presentation/components/SyncOnReconnect';
 import "./global.css";
 
 import { EnrollmentScreen } from './src/presentation/screens/Enrollment/EnrollmentScreen';
@@ -69,6 +70,9 @@ export default function App() {
   //  Se usan Stack.Group para manejar la condicionalidad sin romper el árbol
   return (
     <QueryClientProvider client={queryClient}>
+      {/* Reintento de sincronización al recuperar señal. Debe ir dentro del
+          proveedor de TanStack Query porque consume useSyncMutation. */}
+      <SyncOnReconnect />
       <NavigationContainer>
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           

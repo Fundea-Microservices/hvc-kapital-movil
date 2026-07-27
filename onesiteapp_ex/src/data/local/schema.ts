@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 4, // Incrementa esto cada vez que cambies la estructura 11
+  version: 6, // v6: id_permiso_requerido en cat_menu_appex (menú gateado por permisos)
   tables: [
     // Tabla para control de sincronización por tabla (Regla 4.4 y 4.5)
     tableSchema({
@@ -41,6 +41,7 @@ export const schema = appSchema({
         { name: 'orden', type: 'number' },
         { name: 'seccion', type: 'string', isOptional: true },
         { name: 'ruta_pantalla', type: 'string', isOptional: true },
+        { name: 'id_permiso_requerido', type: 'string', isOptional: true },
       ],
     }),
 
@@ -97,6 +98,8 @@ export const schema = appSchema({
         { name: 'valor', type: 'string', isOptional: true },
         { name: 'uuid_instancia', type: 'string', isOptional: true },
         { name: 'estado_sincro', type: 'number' },
+        { name: 'fecha_inicio', type: 'string', isOptional: true },
+        { name: 'fecha_fin', type: 'string', isOptional: true },
       ],
     }),
 

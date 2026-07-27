@@ -2,63 +2,98 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, Modal, ActivityIndicator, Alert, Dimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import * as SecureStore from 'expo-secure-store';
 import withObservables from '@nozbe/with-observables';
 import { database } from '../../../data/local/database';
 import { Q } from '@nozbe/watermelondb';
 import { useNavigation } from '@react-navigation/native';
 
-import { runFullSync } from '../../../data/local/services/syncManager';
+import { useSyncMutation } from '../../hooks/useSyncMutation';
 import { useAuthStore } from '../../../presentation/store/useAuthStore';
 import { BarChart } from 'react-native-chart-kit';
 import CatMenuAppex from '../../../data/local/models/CatMenu';
 import LocalEncuesta from '../../../data/local/models/LocalEncuesta';
 import LocalCaptura from '../../../data/local/models/LocalCaptura';
+import LocalClientePendiente from '../../../data/local/models/LocalClientePendiente';
+import { leerRaw, type RawUsuarioPerfil } from '../../../data/local/types/raw.types';
+import type { NavegacionApp } from '../../navigation/types';
 import { DynamicCarousel } from '../DynamicCarousel/DynamicCarouselScreen';
 
 interface Props {
   menuItems: CatMenuAppex[];
   encuestas: LocalEncuesta[];
   capturas: LocalCaptura[];
+  clientes: LocalClientePendiente[];
   //onAbrirEncuesta: (id: string) => void;
 }
 
-const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
-  const navigation = useNavigation<any>();
+const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
+  const navigation = useNavigation<NavegacionApp>();
   const insets = useSafeAreaInsets();
   const logoutAction = useAuthStore(state => state.logout);
+  const nombreCompletoStore = useAuthStore(state => state.nombreCompleto);
 
-  const [nombreDisplay, setNombreDisplay] = useState('Cargando colaborador...');
+  // Clientes con la gestión cancelada/eliminada (estado_gestion === 2) no deben contarse en las métricas
+  const idsClientesEliminados = new Set(
+    clientes.filter(c => c.estado_gestion === 2).map(c => c.id_cliente)
+  );
+
+  // El TOTAL no debe contar ni las pausadas (estado_sincro === -1) ni las eliminadas/canceladas
+  const capturasValidas = capturas.filter(c =>
+    c.estado_sincro >= 0 && !idsClientesEliminados.has((c.uuid_instancia || '').split('_')[0])
+  );
+
+  const [nombreDisplay, setNombreDisplay] = useState('Colaborador');
   const [usernameDisplay, setUsernameDisplay] = useState('usuario.fundea');
+  const [empresaDisplay, setEmpresaDisplay] = useState('Corporación FUNDEA');
   const [totalRealizadasReal, setTotalRealizadasReal] = useState(0);
 
   const screenWidth = Dimensions.get("window").width;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
+  // El estado de sincronización lo gobierna TanStack Query (incluye reintentos).
+  const sincronizacion = useSyncMutation();
+  const isSyncing = sincronizacion.isPending;
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [vistaActual, setVistaActual] = useState<'dashboard' | 'sincronizadas'>('dashboard');
 
-  const itemsRaiz = menuItems.filter(item => !item.id_padre);
+  // Permisos del usuario (permisos_json de usuario_perfil) para gatear el menú.
+  const [permisosUsuario, setPermisosUsuario] = useState<Set<string>>(new Set());
+
+  /**
+   * Regla 3.2 del Anexo 1: un ítem con id_permiso_requerido solo se muestra si ese
+   * permiso está en el perfil. Sin permiso requerido (NULL) → visible para todos.
+   * Si aún no se cargaron los permisos, se es permisivo para no vaciar el menú.
+   */
+  const tienePermisoMenu = (item: CatMenuAppex) => {
+    const requerido = item.id_permiso_requerido;
+    if (!requerido || String(requerido).trim() === '') return true;
+    if (permisosUsuario.size === 0) return true;
+    return permisosUsuario.has(String(requerido).trim());
+  };
+
+  const menuVisible = menuItems.filter(tienePermisoMenu);
+  const itemsRaiz = menuVisible.filter(item => !item.id_padre);
 
   //Casteo estricto para evitar fallos de SQLite (String vs Number)
-  const capturasFiltradas = capturas.filter(c => c.uuid_instancia && c.uuid_instancia.trim() !== '');
+  const capturasFiltradas = capturasValidas.filter(c => c.uuid_instancia && c.uuid_instancia.trim() !== '');
 
   // --- PROCESAMIENTO DE MÉTRICAS MÓVILES ---
   const encuestasLlenadas = new Set(
-    capturas.map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')
+    capturasValidas.map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')
   ).size;
 
   const capturasPendientes = new Set(
-    capturas.filter(c => c.estado_sincro === 0).map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')
+    capturasValidas.filter(c => c.estado_sincro === 0).map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')
   ).size;
 
   const capturasEnviadas = new Set(
-    capturas.filter(c => c.estado_sincro === 1).map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')
+    capturasValidas.filter(c => c.estado_sincro === 1).map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')
   ).size;
 
   // Gráfico. Emparejamiento estricto de IDs como texto
   const conteoPorEncuesta: Record<string, number> = {};
   const uuidsUnicos = Array.from(new Set(capturasFiltradas.map(c => (c.uuid_instancia || '').split('_')[0]).filter(id => id !== '')));
-  
+
   uuidsUnicos.forEach(uuid => {
     const captura = capturas.find(c => c.uuid_instancia?.startsWith(uuid));
     if (captura) {
@@ -76,22 +111,63 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
   };
 
   // --- OPERACIONES DEL SISTEMA ---
-  const handleManualSync = async () => {
-    setIsSyncing(true);
-    try {
-      await runFullSync();
-      Alert.alert("Sincronización Exitosa", "Los datos se han enviado y actualizado correctamente.");
-    } catch (error) {
-      Alert.alert("Error", "No se pudo sincronizar. Intente de nuevo más tarde.");
-    } finally {
-      setIsSyncing(false);
-    }
+  // La sincronización manual delega en TanStack Query, que aporta los reintentos
+  // con retroceso exponencial y expone el estado de carga sin banderas manuales.
+  const handleManualSync = () => {
+    sincronizacion.mutate(undefined, {
+      onSuccess: () => {
+        Alert.alert("Sincronización Exitosa", "Los datos se han enviado y actualizado correctamente.");
+      },
+      onError: () => {
+        Alert.alert("Error", "No se pudo sincronizar. Intente de nuevo más tarde.");
+      },
+    });
   };
 
   const handleCerrarSesion = () => {
     logoutAction();
     setIsMenuOpen(false);
   };
+
+  // Carga el nombre, el usuario y la empresa desde el almacenamiento seguro.
+  useEffect(() => {
+    (async () => {
+      const nombre = (await SecureStore.getItemAsync('nombre_completo')) || nombreCompletoStore || '';
+      const handle = (await SecureStore.getItemAsync('user_name')) || '';
+      const empresa = (await SecureStore.getItemAsync('company_name')) || '';
+      if (empresa.trim()) setEmpresaDisplay(empresa.trim());
+
+      // Permisos granulares del perfil offline, para gatear el menú (Anexo 1, 3.2).
+      try {
+        const perfiles = await database.collections.get('usuario_perfil').query().fetch();
+        if (perfiles.length > 0) {
+          const crudo = leerRaw<RawUsuarioPerfil>(perfiles[0]).permisos_json;
+          const parsed: unknown = crudo ? JSON.parse(crudo) : null;
+          // Se aceptan tanto un arreglo de ids como un objeto { idPermiso: true }.
+          const claves: string[] = Array.isArray(parsed)
+            ? parsed.map((x: unknown) => String(x))
+            : typeof parsed === 'object' && parsed !== null
+              ? Object.entries(parsed as Record<string, unknown>)
+                  .filter(([, activo]) => !!activo)
+                  .map(([clave]) => clave)
+              : [];
+          if (claves.length > 0) setPermisosUsuario(new Set(claves));
+        }
+      } catch (e) {
+        console.warn('[PERMISOS] No se pudo leer permisos_json; el menú se muestra completo:', e);
+      }
+      if (nombre.trim()) setNombreDisplay(nombre.trim());
+      if (handle.trim()) {
+        setUsernameDisplay(handle.trim());
+      } else if (nombre.trim()) {
+        // Fallback best-effort para sesiones iniciadas antes de persistir 'user_name'
+        // (el handle real aparece tras el próximo login).
+        setUsernameDisplay(
+          nombre.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, '.')
+        );
+      }
+    })();
+  }, [nombreCompletoStore]);
 
   useEffect(() => {
     const auditarCatalogosOffline = async () => {
@@ -100,8 +176,7 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
         const coleccionCatalogos = database.collections.get('local_catalogo_opciones');
         if (!coleccionCatalogos) return;
 
-        const cantidad = await coleccionCatalogos.query().fetchCount();
-        console.log(` [AUDITORÍA OFFLINE]: Tenemos ${cantidad} catálogos listos para usar sin internet.`);
+        await coleccionCatalogos.query().fetchCount();
       } catch (error) {
         console.error("❌ Error leyendo WatermelonDB:", error);
       }
@@ -283,7 +358,7 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
               <Text className="text-white font-black text-2xl tracking-tight">SGRAS</Text>
               <Text className="text-blue-50 text-base font-bold leading-5">{nombreDisplay}</Text>
               <Text className="text-blue-200/70 text-xs font-semibold mt-0.5">@{usernameDisplay.toLowerCase()}</Text>
-              <Text className="text-blue-200/60 text-xs mt-0.5">Corporación FUNDEA</Text>
+              <Text className="text-blue-200/60 text-xs mt-0.5">{empresaDisplay}</Text>
             </View>
 
             <ScrollView className="flex-1 p-4">
@@ -292,10 +367,12 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
               {itemsRaiz.map(padre => {
                 // Programación Defensiva. Si el padre id es nulo, evita la comparación.
                 // Usamos validación estricta para evitar que undefined rompa WatermelonDB.
-                const hijosBD = menuItems.filter(h => {
+                // menuVisible ya está filtrado por permisos, así que los hijos
+                // sin permiso tampoco aparecen bajo su padre.
+                const hijosBD = menuVisible.filter(h => {
                   if (!h.id_padre) return false;
                   return String(h.id_padre) === String(padre.id);
-                });;
+                });
                 const esMenuEncuestas = padre.ruta_pantalla === '/encuestas_dinamicas';
                 const tieneHijos = hijosBD.length > 0 || (esMenuEncuestas && encuestas.length > 0);
 
@@ -397,7 +474,8 @@ const Dashboard = ({ menuItems, encuestas, capturas, }: Props) => {
 const enhance = withObservables([], () => ({
   menuItems: database.collections.get<CatMenuAppex>('cat_menu_appex').query(Q.sortBy('orden', Q.asc)),
   encuestas: database.collections.get<LocalEncuesta>('local_encuesta').query(),
-  capturas: database.collections.get<LocalCaptura>('local_captura').query()
+  capturas: database.collections.get<LocalCaptura>('local_captura').query(),
+  clientes: database.collections.get<LocalClientePendiente>('local_cliente_pendiente').query(),
 }));
 
 export const DashboardScreen = enhance(Dashboard as any);
