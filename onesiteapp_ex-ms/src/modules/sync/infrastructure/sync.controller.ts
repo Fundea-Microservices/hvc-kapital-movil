@@ -10,11 +10,16 @@ export class SyncController {
   // Flujo 3: TraerDeltas
   @Post('deltas')
   async getDeltas(
-    @Body() body: syncDeltasDto.SyncDeltasDto, 
-    @Headers('x-device-token') deviceToken: string
+    @Body() body: syncDeltasDto.SyncDeltasDto,
+    @Headers('x-device-token') deviceToken: string,
+    @Headers('x-app-version') appVersion: string
   ) {
     if (!deviceToken) throw new UnauthorizedException('DeviceToken es requerido');
-    
+
+    // Regla 4.4: el servidor deniega deltas si la App es obsoleta.
+    // Sin header (apps previas a esta versión) se permite, por compatibilidad.
+    if (appVersion) await this.syncService.validarVersionApp(appVersion);
+
     const validData = syncDeltasDto.SyncDeltasSchema.parse(body);
     return await this.syncService.obtenerDeltas(validData.lastSyncDates, deviceToken);
   }

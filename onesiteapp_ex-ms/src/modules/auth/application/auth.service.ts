@@ -15,7 +15,7 @@ export class AuthService {
   async loguearUsuario(dto: LoginDto, deviceToken: string) {
     // 1. VALIDACIÓN FÍSICA (Regla Crítica: El equipo debe estar activo)
     const dispositivo = await this.dataSource.query(
-      `SELECT IdDispositivo, Estado FROM Dispositivos_AppEx WHERE DeviceToken = @0`,
+      `SELECT IdDispositivo, Estado, IdEmpresa FROM Dispositivos_AppEx WHERE DeviceToken = @0`,
       [deviceToken]
     );
 
@@ -28,7 +28,7 @@ export class AuthService {
 
     // 2. VALIDACIÓN LÓGICA (Credenciales)
     const usuario = await this.dataSource.query(
-      `SELECT IdUsuario, PasswordHash, IdRol, NombreCompleto, Estado FROM Usuarios_AppEx WHERE Username = @0`,
+      `SELECT IdUsuario, PasswordHash, IdRol, NombreCompleto, Estado, IdEmpresa FROM Usuarios_AppEx WHERE Username = @0`,
       [dto.username]
     );
 
@@ -39,9 +39,21 @@ export class AuthService {
 
     // Comparamos la contraseña en texto plano enviada por la app contra el Hash de BCrypt
     const isPasswordValid = await bcrypt.compare(dto.password, usuario[0].PasswordHash);
-    
+
     if (!isPasswordValid) {
       throw new UnauthorizedException('Credenciales inválidas'); // 401
+    }
+
+    // 3. VALIDACIÓN DE PERTENENCIA (Anexo 1, Fase 2 - "Tercero"): el usuario debe
+    // trabajar en la misma empresa a la que está vinculado el dispositivo.
+    // Los equipos legacy (IdEmpresa NULL, enrolados antes del Sprint 7) se omiten
+    // de esta validación para no romperlos; se re-vinculan al volver a enrolar.
+    if (
+      dispositivo[0].IdEmpresa != null &&
+      usuario[0].IdEmpresa != null &&
+      Number(dispositivo[0].IdEmpresa) !== Number(usuario[0].IdEmpresa)
+    ) {
+      throw new ForbiddenException('El usuario no pertenece a la empresa de este dispositivo'); // 403
     }
 
     // 3. GENERACIÓN DE SESIÓN (Access Token y Refresh Token)

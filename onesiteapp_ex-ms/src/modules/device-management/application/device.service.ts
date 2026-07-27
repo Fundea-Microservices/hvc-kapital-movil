@@ -33,8 +33,17 @@ export class DeviceService {
       if (!dispositivoExistente[0].Estado) {
          throw new UnauthorizedException('Dispositivo bloqueado (Device Blocked)');
       }
-      return { 
-        message: 'Equipo ya enrolado', 
+
+      // Re-vinculación de equipos legacy: los enrolados antes del Sprint 7 quedaron
+      // sin IdEmpresa; al volver a enrolar se les asigna la empresa del código usado.
+      await this.dataSource.query(
+        `UPDATE Dispositivos_AppEX SET IdEmpresa = @1, FechaModificacion = GETDATE()
+         WHERE IdDispositivo = @0 AND IdEmpresa IS NULL`,
+        [dispositivoExistente[0].IdDispositivo, empresa[0].IdEmpresa]
+      );
+
+      return {
+        message: 'Equipo ya enrolado',
         deviceToken: dispositivoExistente[0].DeviceToken,
         companyName: companyName // Añadido a la respuesta
       };
@@ -42,10 +51,11 @@ export class DeviceService {
 
     const newDeviceToken = randomUUID();
 
+    // El dispositivo queda VINCULADO a la empresa cuyo código se usó (Anexo 1: Dispositivos.IdEmpresa FK).
     await this.dataSource.query(
-      `INSERT INTO Dispositivos_AppEX (HardwareID, DeviceToken, Estado, FechaIngreso, FechaModificacion) 
-       VALUES (@0, @1, 1, GETDATE(), GETDATE())`,
-      [hardwareId, newDeviceToken]
+      `INSERT INTO Dispositivos_AppEX (HardwareID, DeviceToken, IdEmpresa, Estado, FechaIngreso, FechaModificacion)
+       VALUES (@0, @1, @2, 1, GETDATE(), GETDATE())`,
+      [hardwareId, newDeviceToken, empresa[0].IdEmpresa]
     );
 
     return {
@@ -122,20 +132,46 @@ export class DeviceService {
 
   // SPRINT 4: Método 4.1 - VerificarVersion (GET)
   async verificarVersion(appVersion: string) {
-    // En un entorno real, la versión mínima se leería de la tabla Cat_Parametros
-    const versionMinimaRequerida = '1.0.0'; 
-    
-    // Lógica básica de comparación de versiones
-    const isObsolete = appVersion < versionMinimaRequerida;
+    // La versión mínima es PARAMETRIZABLE desde el BackOffice (Cat_Parametros_AppEx,
+    // clave VERSION_MINIMA_APP). Si la clave no existe, se usa el fallback y toda
+    // versión es aceptada — mismo comportamiento previo, nada se rompe.
+    let versionMinimaRequerida = '1.0.0';
+    try {
+      const filas = await this.dataSource.query(
+        `SELECT Valor FROM Cat_Parametros_AppEx WHERE Clave = 'VERSION_MINIMA_APP'`
+      );
+      if (filas.length && filas[0].Valor && String(filas[0].Valor).trim() !== '') {
+        versionMinimaRequerida = String(filas[0].Valor).trim();
+      }
+    } catch (e) {
+      // La tabla puede no existir en ambientes antiguos; se conserva el fallback.
+    }
 
-    if (isObsolete) {
+    // Comparación por segmentos numéricos. La comparación lexicográfica de strings
+    // está rota para versiones ("1.2.0" < "1.10.0" da falso con strings).
+    const esObsoleta = this.compararVersiones(appVersion, versionMinimaRequerida) < 0;
+
+    if (esObsoleta) {
       throw new ForbiddenException('Update Required');
     }
 
-    return { 
-      valid: true, 
-      message: 'Versión compatible' 
+    return {
+      valid: true,
+      minVersion: versionMinimaRequerida,
+      message: 'Versión compatible'
     };
+  }
+
+  /** Devuelve <0 si a<b, 0 si iguales, >0 si a>b, comparando segmento a segmento. */
+  private compararVersiones(a: string, b: string): number {
+    const segA = String(a || '0').split('.').map(s => parseInt(s, 10) || 0);
+    const segB = String(b || '0').split('.').map(s => parseInt(s, 10) || 0);
+    const largo = Math.max(segA.length, segB.length);
+    for (let i = 0; i < largo; i++) {
+      const diff = (segA[i] || 0) - (segB[i] || 0);
+      if (diff !== 0) return diff;
+    }
+    return 0;
   }
 
 }

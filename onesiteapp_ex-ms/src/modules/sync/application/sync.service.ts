@@ -1,10 +1,36 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { AckSyncDto } from '../domain/dtos/sync-deltas.dto';
 
 @Injectable()
 export class SyncService {
   constructor(private readonly dataSource: DataSource) {}
+
+  /**
+   * Regla 4.4 del Anexo 1: denegar deltas a versiones obsoletas de la App.
+   * La versión mínima es parametrizable (Cat_Parametros_AppEx / VERSION_MINIMA_APP).
+   */
+  async validarVersionApp(appVersion: string) {
+    let versionMinima = '1.0.0';
+    try {
+      const filas = await this.dataSource.query(
+        `SELECT Valor FROM Cat_Parametros_AppEx WHERE Clave = 'VERSION_MINIMA_APP'`
+      );
+      if (filas.length && filas[0].Valor && String(filas[0].Valor).trim() !== '') {
+        versionMinima = String(filas[0].Valor).trim();
+      }
+    } catch (e) {
+      // Tabla ausente en ambientes antiguos: se conserva el fallback permisivo.
+    }
+
+    const segA = String(appVersion || '0').split('.').map(s => parseInt(s, 10) || 0);
+    const segB = versionMinima.split('.').map(s => parseInt(s, 10) || 0);
+    for (let i = 0; i < Math.max(segA.length, segB.length); i++) {
+      const diff = (segA[i] || 0) - (segB[i] || 0);
+      if (diff < 0) throw new ForbiddenException('Update Required');
+      if (diff > 0) return;
+    }
+  }
 
   // 1. Método Principal: TraerDeltas (POST) - Formato Nativo WatermelonDB
   async obtenerDeltas(lastSyncDates: Record<string, string | null>, deviceToken: string) {
@@ -52,6 +78,8 @@ export class SyncService {
           icono: row.Icono,
           orden: row.Orden,
           ruta_pantalla: row.RutaPantalla,
+          // Menú gateado por permisos (Anexo 1, sprint 3.2). NULL = visible para todos.
+          id_permiso_requerido: row.IdPermisoRequerido != null ? row.IdPermisoRequerido.toString() : null,
           // No enviamos el 'Estado' a la app, WatermelonDB usa la lógica de deleted
         };
 
