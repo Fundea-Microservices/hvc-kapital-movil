@@ -6,18 +6,18 @@ import { apiClient } from '../../core/network/apiClient';
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 // --- DTOs y Respuestas ---
-interface EnrollPayload {
+export interface EnrollPayload {
   codigoEnrolamiento: string;
   hardwareId: string;
 }
 
-interface EnrollResponse {
+export interface EnrollResponse {
   message: string;
   deviceToken: string;
   companyName: string;
 }
 
-interface UpdateMetadataPayload {
+export interface UpdateMetadataPayload {
   deviceToken: string;
   modelo: string;
   versionSO: string;
@@ -34,7 +34,9 @@ export interface LoginResponse {
   token_sesion: string;
   refreshToken: string;
   user_id: number;
+  nombrecompleto: string; // El backend devuelve el nombre aquí (minúsculas), no en /auth/permisos
   id_rol: number;
+  estado?: number;
 }
 
 export interface TokenPayload {
@@ -43,23 +45,26 @@ export interface TokenPayload {
 
 // Interfaz para la respuesta de permisos
 export interface PermisosResponse {
-  [key: string]: string | { lectura: boolean; escritura: boolean; } | any;
   rol: string;
   accesos: {
     lectura: boolean;
     escritura: boolean;
   };
-  permisosGranulares: any; // El JSON
+  /** JSON de permisos granulares: arreglo de ids u objeto { idPermiso: boolean }. */
+  permisosGranulares: unknown;
+  /** El endpoint NO devuelve el nombre; se conserva por compatibilidad de lectura. */
+  NombreCompleto?: string;
+  nombreCompleto?: string;
 }
 
 // métodos de Enrolamiento para usar apiClient (Sprint 1)
-export const enrollDeviceApi = async (data: any) => {
-  const response = await apiClient.post('/devices/enroll', data);
+export const enrollDeviceApi = async (data: EnrollPayload): Promise<EnrollResponse> => {
+  const response = await apiClient.post<EnrollResponse>('/devices/enroll', data);
   return response.data;
 };
 
 // Nuevo método PUT para actualizar la información del equipo (Sprint 1)
-export const updateMetadataApi = async (data: any) => {
+export const updateMetadataApi = async (data: UpdateMetadataPayload): Promise<void> => {
   await apiClient.put('/devices/metadata', data);
 };
 

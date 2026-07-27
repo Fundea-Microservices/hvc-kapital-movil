@@ -10,6 +10,7 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { authLocalService } from '../../../data/local/services/authLocalService';
 import { runFullSync, sincronizarCatalogos } from '../../../data/local/services/syncManager';
 import { database } from '../../../data/local/database';
+import { mensajeDeError } from '../../../data/remote/types/sync.types';
 
 type LoginModalState = 'none' | 'syncing' | 'error';
 
@@ -35,20 +36,22 @@ export const LoginScreen = () => {
         await SecureStore.setItemAsync('token_sesion', data.token_sesion);
         await SecureStore.setItemAsync('refresh_token', data.refreshToken);
         await SecureStore.setItemAsync('user_id', String(data.user_id)) //debeir como String
+        await SecureStore.setItemAsync('user_name', username.trim()); // Handle de login para mostrarlo en el Dashboard
 
         // 2. Obtener perfil completo del servidor (NestJS)
         const perfilServidor = await getPermisosApi(data.token_sesion);
-        const nombreParaMostrar = perfilServidor.NombreCompleto || perfilServidor.nombreCompleto || '';
+        // El nombre viene en la respuesta de LOGIN (data.nombrecompleto), no en /auth/permisos.
+        const nombreParaMostrar = data.nombrecompleto || perfilServidor.NombreCompleto || perfilServidor.nombreCompleto || username.trim();
         await SecureStore.setItemAsync('nombre_completo', String(nombreParaMostrar));
-
-        console.log("📥 Perfil recibido para guardar:", perfilServidor);
 
         // 3. GUARDADO OFFLINE
         // Usamos los campos EXACTOS que vimos en tus logs: IdUsuario, NombreCompleto, etc.
         await authLocalService.savePerfilOffline({
           IdUsuario: data.user_id, // Usamos el ID que vino del login
           NombreCompleto: nombreParaMostrar || username,
-          RolNombre: perfilServidor.Rol || 'Usuario',
+          // El backend devuelve la llave en minúscula ('rol'); leerla como 'Rol'
+          // guardaba siempre el valor por defecto.
+          RolNombre: perfilServidor.rol || 'Usuario',
           // FIX: WatermelonDB/LocalService puede ahogarse si le pasamos un JSON anidado. Lo serializamos a string para evitar errores de tipo.
           Permisos: typeof perfilServidor.permisosGranulares === 'string'
             ? perfilServidor.permisosGranulares
@@ -74,9 +77,9 @@ export const LoginScreen = () => {
         setModalState('error');
       }
     },
-    onError: (error: any) => {
+    onError: (error: unknown) => {
       console.error("❌ Error en Login:", error);
-      setErrorMessage(error.response?.data?.message || 'Credenciales incorrectas');
+      setErrorMessage(mensajeDeError(error, 'Credenciales incorrectas'));
       setModalState('error');
     },
   });

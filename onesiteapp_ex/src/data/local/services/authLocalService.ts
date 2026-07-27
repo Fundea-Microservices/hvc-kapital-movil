@@ -1,23 +1,28 @@
 import { database } from '../database';
 import UsuarioPerfil from '../models/UsuarioPerfil';
 
+/** Contrato del perfil que la pantalla de Login persiste para uso offline. */
+export interface PerfilOfflinePayload {
+  IdUsuario: number;
+  NombreCompleto: string;
+  RolNombre: string;
+  /** Permisos ya serializados a string para que SQLite no reciba objetos anidados. */
+  Permisos: string;
+}
+
 export const authLocalService = {
   /**
    * Guarda o actualiza el perfil del usuario para acceso offline.
    * userData recibe directamente el objeto: {"IdUsuario": 1, "NombreCompleto": "...", ...}
    */
-  savePerfilOffline: async (userData: any) => {
+  savePerfilOffline: async (userData: PerfilOfflinePayload) => {
     try {
-      // LOGS DE CONTROL: Para verificar en la terminal que los datos llegan bien
-      console.log("📥 Iniciando persistencia de perfil para:", userData?.NombreCompleto);
-
       return await database.write(async () => {
         const perfilCollection = database.get<UsuarioPerfil>('usuario_perfil');
         
         // 1. Limpieza de seguridad: solo permitimos un perfil activo en el dispositivo
         const registros = await perfilCollection.query().fetch();
         if (registros.length > 0) {
-          console.log("🧹 Limpiando sesiones anteriores...");
           await Promise.all(registros.map(r => r.destroyPermanently()));
         }
 
@@ -33,8 +38,6 @@ export const authLocalService = {
           
           perfil.ultimo_login = new Date();
         });
-
-        console.log("✅ Perfil guardado físicamente en SQLite.");
       });
     } catch (error) {
       // Capturamos cualquier error de WatermelonDB (ej: columnas faltantes o tipos erróneos)

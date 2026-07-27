@@ -13,17 +13,19 @@ export const useLogout = () => {
       
       if (refreshToken) {
         // Notificar al backend (opcionalmente ignoramos el error si falla red)
-        await logoutApi({ refreshToken }).catch(() => console.log("Servidor inaccesible para logout"));
+        await logoutApi({ refreshToken }).catch(() => { });
       }
 
       // 2. Limpieza de Persistencia Local (WatermelonDB)
       await clearUserProfileLocal();
 
-      // 3. Limpieza de Almacenamiento Seguro (Tokens)
+      // 3. Limpieza de Almacenamiento Seguro (Tokens + identidad del usuario, Regla 2.5)
       await SecureStore.deleteItemAsync('token_sesion');
       await SecureStore.deleteItemAsync('refresh_token');
       await SecureStore.deleteItemAsync('user_id');
-      // NOTA: NO borramos 'deviceToken' ni 'isEnrolled' a menos que sea un bloqueo total.
+      await SecureStore.deleteItemAsync('user_name');
+      await SecureStore.deleteItemAsync('nombre_completo');
+      // NOTA: NO borramos 'deviceToken', 'isEnrolled' ni 'company_name' (son del equipo, no del usuario).
 
       // 4. Reset del estado de la UI
       wipeData();

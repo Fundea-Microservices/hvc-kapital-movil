@@ -8,6 +8,7 @@ import { Feather } from '@expo/vector-icons'; // Iconos para los modales
 
 import { enrollDeviceApi, updateMetadataApi } from '../../../data/remote/auth.api';
 import { useAuthStore } from '../../store/useAuthStore';
+import { mensajeDeError } from '../../../data/remote/types/sync.types';
 
 // Unificamos el estado del Modal igual que en el Login
 type EnrollmentModalState = 'none' | 'success' | 'error';
@@ -36,6 +37,10 @@ export const EnrollmentScreen = () => {
       try {
         await SecureStore.setItemAsync('deviceToken', data.deviceToken);
         await SecureStore.setItemAsync('isEnrolled', 'true');
+        // Regla 1.3 del Anexo 1: persistir el nombre de la empresa para mostrarlo en la UI.
+        if (data.companyName) {
+          await SecureStore.setItemAsync('company_name', String(data.companyName));
+        }
 
         setModalMessage('Bienvenido');
         setModalState('success');
@@ -51,9 +56,9 @@ export const EnrollmentScreen = () => {
         setModalState('error');
       }
     },
-    onError: (error: any) => {
+    onError: (error: unknown) => {
       // Ahora el interceptor dejará llegar el error hasta aquí
-      setModalMessage(error.response?.data?.message || 'Código Inválido');
+      setModalMessage(mensajeDeError(error, 'Código Inválido'));
       setModalState('error');
     },
   });
