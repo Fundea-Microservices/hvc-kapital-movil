@@ -22,4 +22,10 @@ export default class LocalCaptura extends Model {
 
   // Control de flujo: 0 = Pendiente, 1 = Enviado (Sprint 5) 
   @field('estado_sincro') estado_sincro!: number;
+
+  // Telemetría de auditoría: fecha/hora de inicio de la captura de la encuesta
+  @field('fecha_inicio') fecha_inicio!: string | null;
+
+  // Telemetría de auditoría: fecha/hora de finalización/cierre de la encuesta
+  @field('fecha_fin') fecha_fin!: string | null;
 }
