@@ -24,6 +24,7 @@ import {
   type RawCaptura,
   type RawCatalogoOpcion,
 } from '../../../data/local/types/raw.types';
+import { parsearReglaValidacion, validarValor } from '../../../domain/validacion/reglaValidacion';
 
 /** Nodo del árbol de opciones con drill-down jerárquico (SELECT anidado). */
 interface NodoOpcionArbol {
@@ -147,11 +148,26 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     return Object.values(respuestas).some(val => val && val.toString().trim() !== '');
   };
 
+  /**
+   * Decisión única de salida, compartida por los tres puntos por los que el
+   * encuestador puede abandonar la pantalla (gesto/navegación de React
+   * Navigation, botón físico de Android y la flecha del header). Sin datos
+   * capturados sale directo; con datos, pide confirmación de pausa. Antes la
+   * flecha del header abría el modal SIEMPRE, sin esta comprobación.
+   */
+  const intentarSalir = (salirDirecto: () => void) => {
+    if (!tieneDatosLlenos()) {
+      puedeSalir.current = true;
+      salirDirecto();
+      return;
+    }
+    setShowPauseModal(true);
+  };
+
   // INTERCEPTOR DE SALIDA PARA REACT NAVIGATION
   useEffect(() => {
     const interceptarSalida = navigation.addListener('beforeRemove', (e: any) => {
       if (puedeSalir.current) return;
-
       if (!tieneDatosLlenos()) {
         puedeSalir.current = true;
         navigation.dispatch(e.data.action);
@@ -166,12 +182,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   // INTERCEPTOR CORREGIDO PARA BOTÓN FISICO (ANDROID)
   useEffect(() => {
     const backAction = () => {
-      if (!tieneDatosLlenos()) {
-        puedeSalir.current = true;
-        navigation.goBack();
-        return true;
-      }
-      setShowPauseModal(true);
+      intentarSalir(() => navigation.goBack());
       return true;
     };
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
@@ -646,12 +657,25 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   };
 
   /**
-   * Regla S4.4 / EnviarEncuesta: no se puede finalizar con obligatorios VISIBLES vacíos.
-   * Row-aware: dentro de una matriz solo cuentan las hijas visibles de cada fila.
-   * Devuelve la lista de secciones incompletas (vacía = todo OK).
+   * Regla S4.4 / EnviarEncuesta: no se puede finalizar con (a) obligatorios
+   * VISIBLES vacíos, ni (b) valores que incumplan su regla_validacion (regex,
+   * máscara o DSL) — antes solo se comprobaba (a); un email mal escrito o un
+   * DPI incompleto pasaban sin bloquear el envío. Row-aware: dentro de una
+   * matriz solo cuentan las hijas visibles de cada fila. Reusa el mismo
+   * intérprete de reglas que SurveyField (parsearReglaValidacion/validarValor)
+   * para no duplicar la lógica de validación.
    */
-  const validarObligatorios = (): string[] => {
-    const seccionesIncompletas: string[] = [];
+  const validarEncuesta = (): { faltantes: string[]; invalidos: string[] } => {
+    const seccionesFaltantes: string[] = [];
+    const seccionesInvalidas: string[] = [];
+
+    const revisarPregunta = (p: LocalEstructuraPregunta, valor: string | undefined): 'ok' | 'faltante' | 'invalido' => {
+      const vacio = !valor || String(valor).trim() === '' || valor === '[]';
+      if (p.es_obligatorio === 1 && vacio) return 'faltante';
+      if (vacio) return 'ok'; // opcional y vacío: nada que validar
+      const regla = parsearReglaValidacion(p.regla_validacion);
+      return validarValor(String(valor), regla).valido ? 'ok' : 'invalido';
+    };
 
     secciones.forEach(seccion => {
       const pregSeccion = preguntas.filter(p =>
@@ -660,6 +684,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
       );
 
       let faltantes = 0;
+      let invalidos = 0;
       pregSeccion.forEach(p => {
         if (!isQuestionVisible(p)) return;
 
@@ -668,34 +693,42 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
           const filas = instanciasMatriz[p.id] || [];
           filas.forEach(uuidFila => {
             hijas.forEach(hija => {
-              if (hija.es_obligatorio !== 1) return;
               if (!isQuestionVisible(hija, uuidFila)) return;
-              const val = respuestas[`${hija.id}_${uuidFila}`];
-              if (!val || String(val).trim() === '' || val === '[]') faltantes++;
+              const resultado = revisarPregunta(hija, respuestas[`${hija.id}_${uuidFila}`]);
+              if (resultado === 'faltante') faltantes++;
+              else if (resultado === 'invalido') invalidos++;
             });
           });
-        } else if (p.es_obligatorio === 1) {
-          const val = respuestas[p.id];
-          if (!val || val.trim() === '') faltantes++;
+        } else {
+          const resultado = revisarPregunta(p, respuestas[p.id]);
+          if (resultado === 'faltante') faltantes++;
+          else if (resultado === 'invalido') invalidos++;
         }
       });
 
       if (faltantes > 0) {
-        seccionesIncompletas.push(`• ${seccion.nombre || 'Sección'} (${faltantes} campo${faltantes > 1 ? 's' : ''})`);
+        seccionesFaltantes.push(`• ${seccion.nombre || 'Sección'} (${faltantes} campo${faltantes > 1 ? 's' : ''})`);
+      }
+      if (invalidos > 0) {
+        seccionesInvalidas.push(`• ${seccion.nombre || 'Sección'} (${invalidos} campo${invalidos > 1 ? 's' : ''})`);
       }
     });
 
-    return seccionesIncompletas;
+    return { faltantes: seccionesFaltantes, invalidos: seccionesInvalidas };
   };
 
   const handleFinalizarFormulario = async () => {
-    // Bloqueo por integridad: campos obligatorios visibles sin responder.
-    const incompletas = validarObligatorios();
-    if (incompletas.length > 0) {
-      Alert.alert(
-        "Encuesta incompleta",
-        `Complete los campos obligatorios antes de finalizar:\n\n${incompletas.join('\n')}`
-      );
+    // Bloqueo por integridad: obligatorios visibles sin responder o con formato inválido.
+    const { faltantes, invalidos } = validarEncuesta();
+    if (faltantes.length > 0 || invalidos.length > 0) {
+      const partes: string[] = [];
+      if (faltantes.length > 0) {
+        partes.push(`Campos obligatorios sin responder:\n${faltantes.join('\n')}`);
+      }
+      if (invalidos.length > 0) {
+        partes.push(`Campos con formato inválido:\n${invalidos.join('\n')}`);
+      }
+      Alert.alert("Encuesta incompleta", partes.join('\n\n'));
       return;
     }
 
@@ -878,7 +911,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   return (
     <SafeAreaView className="flex-1 bg-gray-50" edges={['top']}>
       <View className="flex-row items-center justify-between px-4 py-4 bg-white border-b border-gray-200">
-        <TouchableOpacity onPress={() => setShowPauseModal(true)}>
+        <TouchableOpacity onPress={() => intentarSalir(() => navigation.goBack())}>
           <Feather name="arrow-left" size={24} color="#374151" />
         </TouchableOpacity>
         <View className="flex-1 ml-3">

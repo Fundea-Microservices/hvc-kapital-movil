@@ -5,8 +5,11 @@ import DateTimePicker, { type DateTimePickerEvent } from '@react-native-communit
 import * as Location from 'expo-location';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { obtenerParametroNumerico } from '../../../data/local/services/parametros.service';
+import { parsearReglaValidacion, validarValor, aplicarMascara, type ReglaParseada } from '../../../domain/validacion/reglaValidacion';
 
 type NodoOpcion = { valor: string; hijos: NodoOpcion[] };
+
+const REGLA_VACIA: ReglaParseada = { mascara: null, patrones: [], rangos: [] };
 
 interface SurveyFieldProps {
   etiqueta: string;
@@ -29,9 +32,7 @@ export const SurveyField = ({
   const [isGpsLoading, setIsGpsLoading] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
-  const [mascaraActiva, setMascaraActiva] = useState<string | null>(null);
-  const [listaRegexActivos, setListaRegexActivos] = useState<string[]>([]);
-  const [rangosActivos, setRangosActivos] = useState<{ min: number; max: number }[]>([]);
+  const [reglaParseada, setReglaParseada] = useState<ReglaParseada>(REGLA_VACIA);
   const [errorValidacion, setErrorValidacion] = useState<string | null>(null);
   // Drill-down jerárquico del SELECT: pila de niveles navegados + breadcrumb.
   const [pilaNiveles, setPilaNiveles] = useState<NodoOpcion[][]>([]);
@@ -46,115 +47,17 @@ export const SurveyField = ({
   const tipoCrudo = tipoDato ? tipoDato.trim().toUpperCase() : 'TEXTO';
   const tipoFormateado = ALIAS_TIPOS[tipoCrudo] || tipoCrudo;
 
-  // DE REGLAS DEL BACKOFFICE
+  // DE REGLAS DEL BACKOFFICE — parseo delegado al módulo compartido con
+  // DynamicSurveyScreen (mismo criterio para el input en vivo y al finalizar).
   useEffect(() => {
-    if (!reglaValidacion) {
-      setMascaraActiva(null);
-      setListaRegexActivos([]);
-      setRangosActivos([]);
-      return;
-    }
-
-    try {
-      // Fragmenta por comas, protegiendo cuantificadores {n,m} Y argumentos de
-      // funciones DSL como RANGE(1,100) — la coma interna no debe partir el token.
-      const tokens = reglaValidacion.split(/,(?![^{]*})(?![^(]*\))/).map(t => t.trim()).filter(Boolean);
-      let mascaraDetectada: string | null = null;
-      const regexDetectado: string[] = [];
-      const rangosDetectados: { min: number; max: number }[] = [];
-
-      tokens.forEach(token => {
-        if (token.includes('#')) {
-          mascaraDetectada = token; // El carácter '#' identifica de forma unívoca una máscara visual
-          return;
-        }
-
-        // DSL documentado en el diseño: se traduce a validaciones equivalentes.
-        const dslDigits = token.match(/^DIGITS\(\s*(\d+)\s*\)$/i);
-        if (dslDigits) {
-          regexDetectado.push(`^\\d{${dslDigits[1]}}$`);
-          return;
-        }
-        if (/^EMAIL\(\s*\)$/i.test(token)) {
-          regexDetectado.push('^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$');
-          return;
-        }
-        const dslRange = token.match(/^RANGE\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)$/i);
-        if (dslRange) {
-          rangosDetectados.push({ min: parseFloat(dslRange[1]), max: parseFloat(dslRange[2]) });
-          return;
-        }
-
-        regexDetectado.push(token); // Regex crudo (comportamiento original)
-      });
-
-      setMascaraActiva(mascaraDetectada);
-      setListaRegexActivos(regexDetectado);
-      setRangosActivos(rangosDetectados);
-    } catch (e) {
-      console.error(" Error ejecutando el parseo polimórfico de reglas:", e);
-    }
+    setReglaParseada(parsearReglaValidacion(reglaValidacion));
   }, [reglaValidacion]);
-
-  // FORMATEO (MÁSCARA PURA)
-  const aplicarMascaraDinamica = (textoEntrada: string, plantilla: string | null): string => {
-    if (!plantilla) return textoEntrada;
-
-    // Se extraen únicamente los caracteres alfanuméricos para evitar colapsos por re-formateo visual
-    const digitos = textoEntrada.replace(/[^a-zA-Z0-9]/g, '');
-    let resultado = '';
-    let indiceDigito = 0;
-
-    for (let i = 0; i < plantilla.length && indiceDigito < digitos.length; i++) {
-      if (plantilla[i] === '#') {
-        resultado += digitos[indiceDigito];
-        indiceDigito++;
-      } else {
-        resultado += plantilla[i]; // Inyecta el separador configurado (guiones, espacios, etc.)
-      }
-    }
-    return resultado;
-  };
 
   // VALIDACIÓN INMUNIZADO CONTRA FALSOS POSITIVOS
   const ejecutarValidacionInstitucional = (textoVisual: string): boolean => {
-    if ((listaRegexActivos.length === 0 && rangosActivos.length === 0) || textoVisual.trim() === '') {
-      setErrorValidacion(null);
-      return true;
-    }
-
-    try {
-      // Sanitización defensiva: si el campo opera bajo una máscara, se remueven
-      // caracteres de formato para evaluar el patrón sobre la cadena limpia
-      const textoParaEvaluar = mascaraActiva ? textoVisual.replace(/[\s-]/g, '') : textoVisual;
-
-      // El sistema evalúa secuencialmente cada una de las expresiones parametrizadas (Comportamiento AND)
-      for (const patronDeTokens of listaRegexActivos) {
-        const compiladorRegex = new RegExp(patronDeTokens);
-        const esValido = compiladorRegex.test(textoParaEvaluar);
-
-        if (!esValido) {
-          setErrorValidacion("Formato incorrecto según regla institucional.");
-          return false;
-        }
-      }
-
-      // Rangos numéricos del DSL RANGE(min,max) — también con semántica AND.
-      for (const rango of rangosActivos) {
-        const numero = parseFloat(textoParaEvaluar.replace(',', '.'));
-        if (isNaN(numero) || numero < rango.min || numero > rango.max) {
-          setErrorValidacion(`El valor debe estar entre ${rango.min} y ${rango.max}.`);
-          return false;
-        }
-      }
-
-      setErrorValidacion(null);
-      return true;
-    } catch (error) {
-      console.warn(" Sintaxis de expresión regular inválida en el BackOffice:", listaRegexActivos);
-      setErrorValidacion(null);
-      return true;
-    }
+    const resultado = validarValor(textoVisual, reglaParseada);
+    setErrorValidacion(resultado.mensaje);
+    return resultado.valido;
   };
 
   // Se ejecuta la validación reactiva si los datos lógicos cambian desde el servidor
@@ -162,12 +65,12 @@ export const SurveyField = ({
     if (valor) {
       ejecutarValidacionInstitucional(valor);
     }
-  }, [valor, listaRegexActivos, rangosActivos]);
+  }, [valor, reglaParseada]);
 
   // Manejador centralizado para la captura y formateo de texto en tiempo real
   const handleInputChange = (textoDirecto: string) => {
-    const textoFormateado = mascaraActiva
-      ? aplicarMascaraDinamica(textoDirecto, mascaraActiva)
+    const textoFormateado = reglaParseada.mascara
+      ? aplicarMascara(textoDirecto, reglaParseada.mascara)
       : textoDirecto;
 
     onChangeText(textoFormateado);
@@ -282,7 +185,7 @@ export const SurveyField = ({
             value={valor}
             onChangeText={handleInputChange}
             onBlur={() => { ejecutarValidacionInstitucional(valor); onBlur(); }}
-            keyboardType={tipoFormateado === 'EMAIL' ? 'email-address' : mascaraActiva || ['NUMERO', 'TELEFONO', 'ENTERO'].includes(tipoFormateado) ? 'phone-pad' : 'numeric'}
+            keyboardType={tipoFormateado === 'EMAIL' ? 'email-address' : reglaParseada.mascara || ['NUMERO', 'TELEFONO', 'ENTERO'].includes(tipoFormateado) ? 'phone-pad' : 'numeric'}
             autoCapitalize="none"
             placeholder={esEditable ? "Escriba los datos aquí..." : ""}
           />
