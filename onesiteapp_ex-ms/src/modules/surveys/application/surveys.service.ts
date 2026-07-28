@@ -1,6 +1,22 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
+/**
+ * Lee una bandera booleana de una fila SQL admitiendo varios alias de columna,
+ * porque el BackOffice puede nombrarla distinto a lo documentado (ej. EsObligatorio
+ * vs. Obligatorio vs. EsRequerido). Normaliza BIT/1/'1'/true a 1, cualquier otra
+ * cosa (incluida la ausencia de la columna) a 0.
+ */
+function leerBandera(row: Record<string, unknown>, ...alias: string[]): 0 | 1 {
+  for (const nombre of alias) {
+    const valor = row[nombre];
+    if (valor !== undefined && valor !== null) {
+      return (valor === 1 || valor === '1' || valor === true) ? 1 : 0;
+    }
+  }
+  return 0;
+}
+
 @Injectable()
 export class SurveysService {
   constructor(private readonly dataSource: DataSource) { }
@@ -51,6 +67,21 @@ export class SurveysService {
     `);
     console.log(`📡 [BACKEND] Preguntas encontradas en BD: ${preguntas.length}`);
 
+    // DIAGNÓSTICO TEMPORAL: revela el nombre EXACTO de columnas en la BD real del
+    // BackOffice (no es consultable desde este entorno). Retirar una vez confirmado
+    // que EsObligatorio (u otro alias ya soportado) trae el valor correcto.
+    if (preguntas.length > 0) {
+      console.log('🔎 [DIAGNOSTICO] Columnas de appEx_Pregunta:', Object.keys(preguntas[0]));
+      console.log('🔎 [DIAGNOSTICO] Primera fila (obligatorio/editable/visible):', {
+        EsObligatorio: preguntas[0].EsObligatorio,
+        Obligatorio: preguntas[0].Obligatorio,
+        EsRequerido: preguntas[0].EsRequerido,
+        Requerido: preguntas[0].Requerido,
+        EsEditable: preguntas[0].EsEditable,
+        EsVisibleDefault: preguntas[0].EsVisibleDefault,
+      });
+    }
+
     preguntas.forEach(row => {
       changes.local_estructura_pregunta.created.push({
         id: row.IdPregunta.toString(),
@@ -60,14 +91,16 @@ export class SurveysService {
         // --- CAMPOS CRÍTICOS AGREGADOS ---
         etiqueta: row.Etiqueta,    // <--- ESTO FALTABA
         opciones: row.Opciones,    // <--- ESTO FALTABA (para Radio/Checkbox)
-        es_obligatorio: row.EsObligatorio ? 1 : 0, // <--- ESTO FALTABA
+        // Admite varios alias de columna por si el BackOffice la nombró distinto
+        // a lo documentado; sin esto la bandera cae siempre a 0 en silencio.
+        es_obligatorio: leerBandera(row, 'EsObligatorio', 'Obligatorio', 'EsRequerido', 'Requerido', 'es_obligatorio'),
         // ---------------------------------
 
         tipo_dato: row.TipoDato,
         origen_datos_tipo: row.OrigenDatosTipo,
         origen_datos_cmd: row.OrigenDatosCmd,
-        es_editable: row.EsEditable ? 1 : 0,
-        es_visible_default: row.EsVisibleDefault ? 1 : 0,
+        es_editable: leerBandera(row, 'EsEditable', 'es_editable'),
+        es_visible_default: leerBandera(row, 'EsVisibleDefault', 'es_visible_default'),
         orden: row.Orden,
         sintaxis_calculo: row.SintaxisCalculo,
         regla_visibilidad: row.ReglaVisibilidad,
