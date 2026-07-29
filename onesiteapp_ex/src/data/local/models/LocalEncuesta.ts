@@ -15,7 +15,6 @@ export default class LocalEncuesta extends Model {
 
   @field('nombre') nombre!: string;
   @field('version_activa') version_activa!: number;
-  @field('estado') estado!: boolean; // Añadido para que coincida con tu SQL [cite: 20]
   @field('orden') orden!: number;
   @field('fecha_modificacion') fecha_modificacion!: string;
 

@@ -239,7 +239,6 @@ export const runFullSync = async () => {
               id: textoDe(row, 'id'),
               nombre: textoDe(row, 'nombre') ?? 'Sin nombre',
               version_activa: numeroDe(row, 1, 'version_activa'),
-              estado: 1,
               orden: numeroDe(row, 1, 'orden'),
               fecha_modificacion: textoDe(row, 'fecha_modificacion') ?? new Date().toISOString()
             })),
