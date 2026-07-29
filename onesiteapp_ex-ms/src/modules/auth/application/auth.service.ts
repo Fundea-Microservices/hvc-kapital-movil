@@ -46,8 +46,6 @@ export class AuthService {
 
     // 3. VALIDACIÓN DE PERTENENCIA (Anexo 1, Fase 2 - "Tercero"): el usuario debe
     // trabajar en la misma empresa a la que está vinculado el dispositivo.
-    // Los equipos legacy (IdEmpresa NULL, enrolados antes del Sprint 7) se omiten
-    // de esta validación para no romperlos; se re-vinculan al volver a enrolar.
     if (
       dispositivo[0].IdEmpresa != null &&
       usuario[0].IdEmpresa != null &&
