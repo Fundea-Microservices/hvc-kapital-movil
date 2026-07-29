@@ -1,9 +1,13 @@
-import { Controller, Post, Body, Headers, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Get, Body, Headers, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { SurveysService } from '../application/surveys.service';
+import { CatalogosExternosService } from '../application/catalogos-externos.service';
 
 @Controller('api/v1/surveys')
 export class SurveysController {
-  constructor(private readonly surveysService: SurveysService) {}
+  constructor(
+    private readonly surveysService: SurveysService,
+    private readonly catalogosExternosService: CatalogosExternosService,
+  ) {}
   /**
    * El controlador expone el servicio S1.4 getSurveyStructure.
    * Se requiere el DeviceToken para asegurar la arquitectura Zero Trust.
@@ -26,6 +30,16 @@ export class SurveysController {
   ) {
     if (!deviceToken) throw new UnauthorizedException('Dispositivo no autenticado');
     return await this.surveysService.getCatalogs(lastSyncDate);
+  }
+  /**
+   * Proxy de catálogos servidos por una API externa (OrigenDatosTipo = 'API').
+   * El backend agrega el token de esa API (nunca viaja al dispositivo) y
+   * resuelve los catálogos dependientes ({padre}) antes de responder.
+   */
+  @Get('catalogos-api')
+  async getCatalogosApi(@Headers('x-device-token') deviceToken: string) {
+    if (!deviceToken) throw new UnauthorizedException('Dispositivo no autenticado');
+    return { data: await this.catalogosExternosService.obtenerCatalogosApi() };
   }
   /**
    * El controlador expone el endpoint 1.7 sendSurvey para la recepción de datos.

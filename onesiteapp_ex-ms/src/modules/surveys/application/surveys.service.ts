@@ -67,21 +67,6 @@ export class SurveysService {
     `);
     console.log(`📡 [BACKEND] Preguntas encontradas en BD: ${preguntas.length}`);
 
-    // DIAGNÓSTICO TEMPORAL: revela el nombre EXACTO de columnas en la BD real del
-    // BackOffice (no es consultable desde este entorno). Retirar una vez confirmado
-    // que EsObligatorio (u otro alias ya soportado) trae el valor correcto.
-    if (preguntas.length > 0) {
-      console.log('🔎 [DIAGNOSTICO] Columnas de appEx_Pregunta:', Object.keys(preguntas[0]));
-      console.log('🔎 [DIAGNOSTICO] Primera fila (obligatorio/editable/visible):', {
-        EsObligatorio: preguntas[0].EsObligatorio,
-        Obligatorio: preguntas[0].Obligatorio,
-        EsRequerido: preguntas[0].EsRequerido,
-        Requerido: preguntas[0].Requerido,
-        EsEditable: preguntas[0].EsEditable,
-        EsVisibleDefault: preguntas[0].EsVisibleDefault,
-      });
-    }
-
     preguntas.forEach(row => {
       changes.local_estructura_pregunta.created.push({
         id: row.IdPregunta.toString(),
