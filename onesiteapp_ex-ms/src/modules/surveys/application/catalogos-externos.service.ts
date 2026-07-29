@@ -160,15 +160,59 @@ export class CatalogosExternosService {
     // Retirar una vez validado el normalizador contra datos reales.
     console.log(`🔎 [DIAGNOSTICO API-EXT] ${url} ->`, JSON.stringify(cuerpo).slice(0, 500));
 
-    if (Array.isArray(cuerpo)) return cuerpo;
-    if (cuerpo && typeof cuerpo === 'object') {
-      const obj = cuerpo as Record<string, unknown>;
-      if (Array.isArray(obj.data)) return obj.data;
-      if (Array.isArray(obj.resultado)) return obj.resultado;
-      if (Array.isArray(obj.items)) return obj.items;
+    const filas = this.extraerFilas(cuerpo);
+    if (filas.length === 0) {
+      console.warn(`[CATALOGOS-API] Respuesta de ${url} no es un arreglo reconocible; se omite.`);
     }
-    console.warn(`[CATALOGOS-API] Respuesta de ${url} no es un arreglo reconocible; se omite.`);
+    return filas;
+  }
+
+  /**
+   * Desenvuelve la respuesta cruda a un arreglo de filas, tolerando las envolturas
+   * comunes ({data: [...]}, {resultado: [...]}, {items: [...]}) y el caso real
+   * observado en la API de catálogos: {data: {catalogos: [...]}}, donde cada
+   * elemento es un nodo raíz (ej. el país) cuyas opciones reales están en su
+   * propio arreglo `hijos`/`children` (ej. los departamentos). Solo se toma UN
+   * nivel de `hijos` — un nivel más profundo (ej. municipios anidados dentro de
+   * cada departamento) se ignora aquí a propósito: esa relación la resuelve la
+   * fase 2 ({padre}) con la pregunta hija correspondiente, para no mezclar dos
+   * catálogos distintos bajo el mismo nombre sintético "API_<IdPregunta>".
+   */
+  private extraerFilas(cuerpo: unknown): unknown[] {
+    if (Array.isArray(cuerpo)) return cuerpo;
+    if (!cuerpo || typeof cuerpo !== 'object') return [];
+
+    const obj = cuerpo as Record<string, unknown>;
+    const candidatos = [obj.data, obj.resultado, obj.items];
+    for (const candidato of candidatos) {
+      if (Array.isArray(candidato)) return candidato;
+    }
+    if (obj.data && typeof obj.data === 'object') {
+      const dataObj = obj.data as Record<string, unknown>;
+      const anidados = [dataObj.catalogos, dataObj.resultado, dataObj.items];
+      for (const candidato of anidados) {
+        if (Array.isArray(candidato)) return this.desenvolverHijos(candidato);
+      }
+    }
     return [];
+  }
+
+  /** Si los nodos son raíces envolventes con `hijos`/`children`, devuelve ese nivel; si no, los nodos tal cual. */
+  private desenvolverHijos(nodos: unknown[]): unknown[] {
+    if (nodos.length === 0) return nodos;
+    const primero = nodos[0];
+    if (typeof primero !== 'object' || primero === null) return nodos;
+    const f = primero as Record<string, unknown>;
+    const hijos = Array.isArray(f.hijos) ? f.hijos : Array.isArray(f.children) ? f.children : null;
+    if (hijos === null) return nodos;
+    // Une los hijos de TODOS los nodos raíz (normalmente hay uno solo, ej. el país).
+    return nodos.flatMap((n) => {
+      if (typeof n !== 'object' || n === null) return [];
+      const nf = n as Record<string, unknown>;
+      if (Array.isArray(nf.hijos)) return nf.hijos;
+      if (Array.isArray(nf.children)) return nf.children;
+      return [];
+    });
   }
 
   /**
