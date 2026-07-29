@@ -318,6 +318,10 @@ export const runFullSync = async () => {
     const token = useAuthStore.getState().token;
     if (token) {
       await sincronizarCatalogos(database, token);
+      // Catálogos de OrigenDatosTipo='API' (ej. Departamento/Municipio), resueltos
+      // por el backend (proxy) y precargados aquí para que funcionen sin señal en
+      // campo. Falla aislada: un problema con la API externa no debe abortar el sync.
+      await sincronizarCatalogosApi(database);
     }
 
     // ========================================================================
@@ -405,5 +409,56 @@ export const sincronizarCatalogos = async (databaseInstance: Database, token: st
     });
   } catch (error) {
     console.error('❌ Error en el servicio de sincronización de catálogos:', error);
+  }
+};
+
+// ============================================================================
+// 3. CATÁLOGOS DESDE API EXTERNA (OrigenDatosTipo = 'API', ej. Departamento/Municipio)
+// ============================================================================
+/**
+ * Descarga los catálogos que el BackOffice marcó con OrigenDatosTipo='API' (el
+ * backend los resuelve como proxy, incluida la cascada padre-hijo vía {padre})
+ * y los guarda en local_catalogo_opciones para que funcionen offline en campo.
+ *
+ * A diferencia de sincronizarCatalogos(), esta función SOLO reemplaza las filas
+ * cuyo nombre_catalogo empieza con "API_" — no toca los catálogos maestros del
+ * otro origen. Falla aislada (try/catch propio): si la API externa no responde,
+ * el resto de la sincronización debe completarse igual.
+ */
+export const sincronizarCatalogosApi = async (databaseInstance: Database): Promise<void> => {
+  try {
+    const respuesta = await apiClient.get<unknown>('/surveys/catalogos-api');
+    const cuerpo = respuesta.data;
+    const datos = esFilaServidor(cuerpo) ? cuerpo.data : null;
+    const opciones: FilaServidor[] = Array.isArray(datos) ? datos.filter(esFilaServidor) : [];
+
+    if (opciones.length === 0) return; // Nada que precargar; no es un error.
+
+    const catalogoCollection = databaseInstance.collections.get<CatalogoOpcion>('local_catalogo_opciones');
+
+    await databaseInstance.write(async () => {
+      // Solo se purgan las filas de origen API (prefijo "API_"), preservando los
+      // catálogos maestros sincronizados por sincronizarCatalogos(). Se filtra en
+      // JS (no con Q.like) para no depender de reglas de escape de SQL LIKE.
+      const todos = await catalogoCollection.query().fetch();
+      const existentesApi = todos.filter((r) => (r.nombreCatalogo || '').startsWith('API_'));
+      const registrosBorrados = existentesApi.map((r) => r.prepareDestroyPermanently());
+
+      const nuevosRegistros = opciones.map((op) =>
+        catalogoCollection.prepareCreate((record: CatalogoOpcion) => {
+          record.idRemoto = textoDe(op, 'id_remoto') ?? '';
+          record.nombreCatalogo = textoDe(op, 'nombre_catalogo') ?? '';
+          record.codigoCatalogo = textoDe(op, 'codigo_catalogo') ?? '';
+          record.codigoOpcion = textoDe(op, 'codigo_opcion') ?? '';
+          record.valorOpcion = textoDe(op, 'valor_opcion') ?? '';
+          record.idPadreOpcion = textoDe(op, 'id_padre_opcion');
+        })
+      );
+
+      await databaseInstance.batch(registrosBorrados.concat(nuevosRegistros));
+    });
+  } catch (error) {
+    // No se relanza: un fallo de la API externa no debe abortar runFullSync.
+    console.warn('[CATALOGOS-API] No se pudieron precargar los catálogos de API externa:', error);
   }
 };

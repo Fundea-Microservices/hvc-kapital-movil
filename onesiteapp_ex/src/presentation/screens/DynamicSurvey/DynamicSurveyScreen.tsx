@@ -51,6 +51,20 @@ const parseNumeroLocal = (valorCrudo: string): number => {
   return parseFloat(limpio);
 };
 
+/**
+ * Nombre de catálogo bajo el que se buscan las opciones de una pregunta en
+ * local_catalogo_opciones. Para origen_datos_tipo='API' es el nombre sintético
+ * "API_<idPregunta>" que genera syncManager.sincronizarCatalogosApi() — en ese
+ * caso origen_datos_cmd es la URL externa (ej. municipios por departamento),
+ * NO un nombre de catálogo, así que no se puede usar directamente para buscar.
+ */
+const resolverNombreCatalogo = (p: LocalEstructuraPregunta): string => {
+  const raw = leerRaw<RawPregunta>(p);
+  const tipo = (p.origen_datos_tipo || raw.origen_datos_tipo || '').trim().toUpperCase();
+  if (tipo === 'API') return `API_${p.id}`;
+  return String(p.opciones || raw.opciones || raw.origen_datos_cmd || '');
+};
+
 interface Props {
   route: RutaDe<'DynamicSurvey'>;
   encuesta: LocalEncuesta | null;
@@ -753,18 +767,21 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     if (!p) return JSON.stringify([]);
 
     const rawPregunta = leerRaw<RawPregunta>(p);
+    const tipoOrigenDatos = (p.origen_datos_tipo || rawPregunta.origen_datos_tipo || '').trim().toUpperCase();
+    const esOrigenApi = tipoOrigenDatos === 'API';
     const opcionesString = p.opciones || rawPregunta.opciones || rawPregunta.origen_datos_cmd || '';
 
-    if (!opcionesString) return JSON.stringify([]);
+    if (!opcionesString && !esOrigenApi) return JSON.stringify([]);
 
-    const rawString = String(opcionesString).trim();
+    const rawString = String(opcionesString || '').trim();
     // 1. CASO A: El backend envió un arreglo JSON directo (Ej: '["Masculino", "Femenino"]')
     if (rawString.startsWith('[')) {
       return rawString;
     }
 
-    // 2. CASO B: Opciones enviadas como texto separado por Pipes (|) o Comas (,) que NO son catálogos
-    if (!rawString.toUpperCase().includes('CAT_')) {
+    // 2. CASO B: Opciones enviadas como texto separado por Pipes (|) o Comas (,) que NO son
+    // catálogos. No aplica a origen 'API': ahí el string es una URL, no una lista inline.
+    if (!esOrigenApi && !rawString.toUpperCase().includes('CAT_')) {
       if (rawString.includes('|')) {
         return JSON.stringify(rawString.split('|').map(o => o.trim()));
       }
@@ -779,7 +796,9 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Quita todas las tildes (é -> e)
         .trim().toLowerCase().replace('cat_', '');
 
-    const strBuscar = normalizar(rawString);
+    // Para origen 'API' se busca por el nombre sintético "API_<idPregunta>" — el
+    // OrigenDatosCmd original (la URL) no sirve como nombre de catálogo.
+    const strBuscar = normalizar(esOrigenApi ? resolverNombreCatalogo(p) : rawString);
 
     let idOpcionPadreRequerido: string | null = null;
     if (p.regla_visibilidad && p.regla_visibilidad.includes('dependeDeCatalogo')) {
@@ -791,8 +810,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
 
         if (respuestaPadreTxt) {
           const preguntaPadre = preguntas.find(x => x.id === idPadreCascada);
-          const rawPadre = preguntaPadre ? leerRaw<RawPregunta>(preguntaPadre) : null;
-          const catalogoPadreNormalizado = normalizar(String(preguntaPadre?.opciones || rawPadre?.origen_datos_cmd || ''));
+          const catalogoPadreNormalizado = normalizar(preguntaPadre ? resolverNombreCatalogo(preguntaPadre) : '');
 
           const candidatosPadre = catalogos.filter(c => String(leerRaw<RawCatalogoOpcion>(c).valor_opcion) === respuestaPadreTxt);
         
@@ -837,7 +855,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
       })
       .map(c => String(leerRaw<RawCatalogoOpcion>(c).valor_opcion));
 
-    if (items.length === 0 && !rawString.toUpperCase().includes('CAT_')) {
+    if (items.length === 0 && !esOrigenApi && !rawString.toUpperCase().includes('CAT_')) {
       return JSON.stringify([rawString]);
     }
 
@@ -850,13 +868,16 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     if (!p) return JSON.stringify([]);
 
     const rawPregunta = leerRaw<RawPregunta>(p);
+    const tipoOrigenDatos = (p.origen_datos_tipo || rawPregunta.origen_datos_tipo || '').trim().toUpperCase();
+    const esOrigenApi = tipoOrigenDatos === 'API';
     const opcionesString = p.opciones || rawPregunta.opciones || rawPregunta.origen_datos_cmd || '';
     const rawString = String(opcionesString || '').trim();
     // ya vienen filtradas a un solo padre → planas.
     const esCascadaHija = !!(p.regla_visibilidad && p.regla_visibilidad.includes('dependeDeCatalogo'));
     const upper = rawString.toUpperCase();
-    const esInline = rawString.startsWith('[') ||
-      (!upper.includes('CAT_') && (rawString.includes('|') || rawString.includes(',')));
+    // Origen 'API': el string es una URL, nunca una lista inline aunque contenga ',' o '|'.
+    const esInline = !esOrigenApi && (rawString.startsWith('[') ||
+      (!upper.includes('CAT_') && (rawString.includes('|') || rawString.includes(','))));
 
     if (!rawString || esInline || esCascadaHija) {
       // Árbol plano reutilizando la resolución existente.
@@ -870,7 +891,8 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         .normalize("NFD").replace(/[̀-ͯ]/g, "")
         .trim().toLowerCase().replace('cat_', '');
 
-    const strBuscar = normalizar(rawString);
+    // Origen 'API': se busca por el nombre sintético "API_<idPregunta>" (ver obtenerOpciones).
+    const strBuscar = normalizar(esOrigenApi ? resolverNombreCatalogo(p) : rawString);
 
     // Opciones que pertenecen al catálogo de esta pregunta (mismo predicado que obtenerOpciones).
     const delCatalogo = catalogos.filter(c => {
