@@ -8,8 +8,7 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view
 import { loginApi, getPermisosApi } from '../../../data/remote/auth.api';
 import { useAuthStore } from '../../store/useAuthStore';
 import { authLocalService } from '../../../data/local/services/authLocalService';
-import { runFullSync, sincronizarCatalogos } from '../../../data/local/services/syncManager';
-import { database } from '../../../data/local/database';
+import { runFullSync } from '../../../data/local/services/syncManager';
 import { mensajeDeError } from '../../../data/remote/types/sync.types';
 
 type LoginModalState = 'none' | 'syncing' | 'error';
@@ -63,13 +62,12 @@ export const LoginScreen = () => {
         setModalState('none');
         setLoggedIn(data.token_sesion, data.user_id, nombreParaMostrar);
 
-        // 5. SINCRONIZACIÓN: En segundo plano
-        //runFullSync().catch((err) => console.error("Error en sincro inicial:", err));
+        // 5. SINCRONIZACIÓN: En segundo plano.
+        // NO encadenar sincronizarCatalogos() aquí: runFullSync() ya lo ejecuta y,
+        // acto seguido, sincronizarCatalogosApi(). Volver a llamarlo al final
+        // purgaba local_catalogo_opciones y borraba las filas API_* recién
+        // guardadas, dejando los selects de origen API vacíos.
         runFullSync()
-          .then(() => {
-            // Si la sincronización principal funcionó, bajamos los catálogos pesados
-            return sincronizarCatalogos(database, data.token_sesion);
-          })
           .catch((err) => console.error("Error en sincro general:", err));
       } catch (error) {
         console.error("❌ Error en proceso post-login:", error);

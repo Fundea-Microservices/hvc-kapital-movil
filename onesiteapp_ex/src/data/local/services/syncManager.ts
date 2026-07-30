@@ -387,9 +387,16 @@ export const sincronizarCatalogos = async (databaseInstance: Database, token: st
 
     // Se abre un bloque de escritura único para garantizar la atomicidad (Todo o Nada)
     await databaseInstance.write(async () => {
-      // El sistema purga los registros obsoletos anteriores para evitar duplicados residuales
+      // El sistema purga los registros obsoletos anteriores para evitar duplicados residuales.
+      // IMPORTANTE: se excluyen las filas de origen API (prefijo "API_"), que son
+      // propiedad exclusiva de sincronizarCatalogosApi(). Cada función es dueña de
+      // un subconjunto disjunto, así que el orden en que se invoquen deja de importar;
+      // antes, una llamada tardía a esta función borraba los catálogos de API ya
+      // descargados y los selects de Departamento/Municipio quedaban vacíos.
       const existentes = await catalogoCollection.query().fetch();
-      const registrosBorrados = existentes.map((r) => r.prepareDestroyPermanently());
+      const registrosBorrados = existentes
+        .filter((r) => !(r.nombreCatalogo || '').startsWith('API_'))
+        .map((r) => r.prepareDestroyPermanently());
 
       // Mapeo estructurado de la carga útil hacia el esquema local de SQLite
       const nuevosRegistros = allCatalogosRemotos.map((cat) =>
