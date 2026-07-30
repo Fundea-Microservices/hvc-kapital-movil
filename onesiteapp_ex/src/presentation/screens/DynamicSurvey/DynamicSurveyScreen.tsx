@@ -55,14 +55,21 @@ const parseNumeroLocal = (valorCrudo: string): number => {
  * Nombre de catálogo bajo el que se buscan las opciones de una pregunta en
  * local_catalogo_opciones. Para origen_datos_tipo='API' es el nombre sintético
  * "API_<idPregunta>" que genera syncManager.sincronizarCatalogosApi() — en ese
- * caso origen_datos_cmd es la URL externa (ej. municipios por departamento),
- * NO un nombre de catálogo, así que no se puede usar directamente para buscar.
+ * caso origen_datos_cmd es la CLAVE que el backend resuelve contra la API
+ * externa (ej. "departamentos"), NO un nombre de catálogo local, así que no
+ * se puede usar directamente para buscar.
  */
 const resolverNombreCatalogo = (p: LocalEstructuraPregunta): string => {
   const raw = leerRaw<RawPregunta>(p);
   const tipo = (p.origen_datos_tipo || raw.origen_datos_tipo || '').trim().toUpperCase();
   if (tipo === 'API') return `API_${p.id}`;
   return String(p.opciones || raw.opciones || raw.origen_datos_cmd || '');
+};
+
+/** true si la pregunta es de origen API (ver resolverNombreCatalogo). */
+const esOrigenApiPregunta = (p: LocalEstructuraPregunta): boolean => {
+  const raw = leerRaw<RawPregunta>(p);
+  return (p.origen_datos_tipo || raw.origen_datos_tipo || '').trim().toUpperCase() === 'API';
 };
 
 interface Props {
@@ -243,6 +250,15 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     return origen ? String(origen.id) : String(referencia);
   };
 
+  /**
+   * El BackOffice a veces escribe el token Qn SIN comillas como valor JSON
+   * (ej. `{"dependeDeCatalogo": Q10}`), lo cual no es JSON válido y hace que
+   * JSON.parse falle por completo. Se envuelve el token en comillas antes de
+   * parsear (`Q10` -> `"Q10"`) para que quede como un string parseable; el
+   * llamador debe resolverlo después con resolverIdDesdeToken.
+   */
+  const sanearTokenQEnJSON = (str: string): string => str.replace(/:(\s*)Q(\d+)\b/gi, ':$1"Q$2"');
+
   const isQuestionVisible = (p: LocalEstructuraPregunta, uuidFila?: string | null, snap: Record<string, string> = respuestas) => {
     if (!p.regla_visibilidad) return true;
 
@@ -264,11 +280,12 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     try {
       const reglaStr = p.regla_visibilidad.toString().trim();
       if (reglaStr.startsWith('{')) {
-        const regla = JSON.parse(reglaStr);
+        const regla = JSON.parse(sanearTokenQEnJSON(reglaStr));
         // Cascada de catálogos (Padre-Hijo-Nieto): solo es visible si su pregunta
         // padre inmediata ya tiene una respuesta seleccionada.
         if (regla.dependeDeCatalogo) {
-          const respuestaPadre = resolverRespuesta(regla.dependeDeCatalogo);
+          const idPadre = resolverIdDesdeToken(String(regla.dependeDeCatalogo), p);
+          const respuestaPadre = resolverRespuesta(idPadre);
           return !!respuestaPadre && respuestaPadre.toString().trim() !== '';
         }
         return normalizarComparacion(resolverRespuesta(regla.dependeDe)) === normalizarComparacion(regla.valorEsperado);
@@ -797,28 +814,36 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         .trim().toLowerCase().replace('cat_', '');
 
     // Para origen 'API' se busca por el nombre sintético "API_<idPregunta>" — el
-    // OrigenDatosCmd original (la URL) no sirve como nombre de catálogo.
+    // OrigenDatosCmd original (la clave que resuelve el backend) no sirve como nombre de catálogo.
     const strBuscar = normalizar(esOrigenApi ? resolverNombreCatalogo(p) : rawString);
 
     let idOpcionPadreRequerido: string | null = null;
     if (p.regla_visibilidad && p.regla_visibilidad.includes('dependeDeCatalogo')) {
       try {
-        const reglaCascada = JSON.parse(p.regla_visibilidad);
-        const idPadreCascada = reglaCascada.dependeDeCatalogo;
+        const reglaCascada = JSON.parse(sanearTokenQEnJSON(p.regla_visibilidad));
+        const idPadreCascada = resolverIdDesdeToken(String(reglaCascada.dependeDeCatalogo), p);
         // La respuesta del padre puede estar acotada a la fila de matriz actual.
         const respuestaPadreTxt = (uuidFila ? respuestas[`${idPadreCascada}_${uuidFila}`] : undefined) ?? respuestas[idPadreCascada];
 
         if (respuestaPadreTxt) {
           const preguntaPadre = preguntas.find(x => x.id === idPadreCascada);
           const catalogoPadreNormalizado = normalizar(preguntaPadre ? resolverNombreCatalogo(preguntaPadre) : '');
+          const padreEsOrigenApi = !!preguntaPadre && esOrigenApiPregunta(preguntaPadre);
 
           const candidatosPadre = catalogos.filter(c => String(leerRaw<RawCatalogoOpcion>(c).valor_opcion) === respuestaPadreTxt);
-        
+
           const candidatosDelCatalogoPadre = catalogoPadreNormalizado
             ? candidatosPadre.filter(c => {
                 const rCat = leerRaw<RawCatalogoOpcion>(c);
                 const nombreCatBD = normalizar(rCat.nombre_catalogo || '');
                 const codigoCatBD = normalizar(rCat.codigo_catalogo || '');
+                // Origen 'API': nombre sintético exacto — con "includes" un texto
+                // homónimo en dos catálogos distintos (ej. un municipio y un
+                // departamento con el mismo nombre) puede resolver al catálogo
+                // equivocado y dejar la cascada vacía o mal enlazada.
+                if (padreEsOrigenApi) {
+                  return nombreCatBD === catalogoPadreNormalizado || codigoCatBD === catalogoPadreNormalizado;
+                }
                 return nombreCatBD.includes(catalogoPadreNormalizado) ||
                   codigoCatBD.includes(catalogoPadreNormalizado) ||
                   catalogoPadreNormalizado.includes(nombreCatBD);
@@ -841,11 +866,16 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         const nombreCatBD = normalizar(rawCat.nombre_catalogo || '');
         const codigoCatBD = normalizar(rawCat.codigo_catalogo || '');
 
-        // Búsqueda flexible (includes) para evitar fallos por espacios o guiones
-        const perteneceCatalogo = nombreCatBD === strBuscar ||
-          codigoCatBD === strBuscar ||
-          nombreCatBD.includes(strBuscar) ||
-          codigoCatBD.includes(strBuscar);
+        // Origen 'API': el nombre sintético "API_<idPregunta>" lo generamos
+        // nosotros y siempre es exacto — con "includes", la pregunta id 1
+        // (API_1) también matchea API_10, API_11, API_100. Para catálogos
+        // maestros se conserva la búsqueda flexible (espacios, guiones).
+        const perteneceCatalogo = esOrigenApi
+          ? (nombreCatBD === strBuscar || codigoCatBD === strBuscar)
+          : (nombreCatBD === strBuscar ||
+              codigoCatBD === strBuscar ||
+              nombreCatBD.includes(strBuscar) ||
+              codigoCatBD.includes(strBuscar));
 
         if (idOpcionPadreRequerido) {
           return perteneceCatalogo && String(rawCat.id_padre_opcion) === idOpcionPadreRequerido;
@@ -879,7 +909,12 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     const esInline = !esOrigenApi && (rawString.startsWith('[') ||
       (!upper.includes('CAT_') && (rawString.includes('|') || rawString.includes(','))));
 
-    if (!rawString || esInline || esCascadaHija) {
+    // Origen 'API' NUNCA es drill-down: el backend emite un solo nivel por
+    // catálogo (API_<idPregunta>), y los "hijos" que pudiera haber en
+    // local_catalogo_opciones (id_padre_opcion) pertenecen a OTRA pregunta
+    // (ej. los municipios de Departamento). Sin esta guarda, el select de
+    // Departamento navegaba hacia dentro y terminaba guardando un municipio.
+    if (!rawString || esInline || esCascadaHija || esOrigenApi) {
       // Árbol plano reutilizando la resolución existente.
       let planas: string[] = [];
       try { planas = JSON.parse(obtenerOpciones(p, uuidFila) || '[]'); } catch { planas = []; }
@@ -899,6 +934,8 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
       const rc = leerRaw<RawCatalogoOpcion>(c);
       const nombreCatBD = normalizar(rc.nombre_catalogo || '');
       const codigoCatBD = normalizar(rc.codigo_catalogo || '');
+      // Origen 'API': nombre sintético exacto (ver el mismo criterio en obtenerOpciones).
+      if (esOrigenApi) return nombreCatBD === strBuscar || codigoCatBD === strBuscar;
       return nombreCatBD === strBuscar || codigoCatBD === strBuscar ||
         nombreCatBD.includes(strBuscar) || codigoCatBD.includes(strBuscar);
     });
