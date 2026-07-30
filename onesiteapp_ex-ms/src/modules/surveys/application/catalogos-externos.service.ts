@@ -1,6 +1,19 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
+import {
+  esDependienteUrl,
+  esRutaRelativa,
+  esUrlAbsoluta,
+  nombresVariableUrl,
+  sustituirCodigoPadre,
+} from '../domain/catalogos-externos.claves';
+import {
+  MapeoRespuestaExterna,
+  OpcionExterna,
+  mapeoDesdeEntorno,
+  normalizarRespuesta,
+} from '../domain/catalogos-externos.mapeo';
 
 /** Fila normalizada, en la misma forma que espera local_catalogo_opciones en la app. */
 export interface OpcionCatalogoExterno {
@@ -12,14 +25,33 @@ export interface OpcionCatalogoExterno {
   id_padre_opcion: string | null;
 }
 
-/** Placeholder que el BackOffice usa en OrigenDatosCmd para catálogos dependientes. */
-const PLACEHOLDER_PADRE = '{padre}';
+interface FilaPregunta {
+  IdPregunta: number;
+  OrigenDatosCmd: string | null;
+  ReglaVisibilidad: string | null;
+}
+
+type ResolucionOrigen =
+  | { tipo: 'url'; url: string; variable: string | null; legado: boolean }
+  | { tipo: 'sin-resolver'; clave: string; variablesProbadas: string[] };
+
+interface PlanCatalogo {
+  idPregunta: number;
+  url: string;
+  esDependiente: boolean;
+  reglaVisibilidad: string | null;
+}
 
 /**
  * Proxy de catálogos servidos por una API externa (OrigenDatosTipo = 'API' en
  * appEx_Pregunta). El token de esa API vive SOLO en el .env del servidor — nunca
  * viaja al dispositivo, a diferencia de una variable EXPO_PUBLIC_* que queda
  * embebida y extraíble del APK.
+ *
+ * `OrigenDatosCmd` es una CLAVE corta (ej. "departamentos", "Municipio"), NO una
+ * URL: la URL real vive en el .env bajo `API_CATALOGOS_EXT_<CLAVE>_URL` (ver
+ * `resolverOrigen`). Se conserva compatibilidad con una URL completa como
+ * fallback legado, con warn de deprecación.
  *
  * Los resultados se normalizan a la MISMA forma que un catálogo maestro local
  * (local_catalogo_opciones), con nombre_catalogo = "API_<IdPregunta>", para que
@@ -34,21 +66,25 @@ const PLACEHOLDER_PADRE = '{padre}';
  */
 @Injectable()
 export class CatalogosExternosService {
+  private readonly logger = new Logger(CatalogosExternosService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly configService: ConfigService,
   ) {}
 
   async obtenerCatalogosApi(): Promise<OpcionCatalogoExterno[]> {
-    const preguntas = await this.dataSource.query(`
+    const filas: FilaPregunta[] = await this.dataSource.query(`
       SELECT p.IdPregunta, p.OrigenDatosCmd, r.ReglaVisibilidad
       FROM appEx_Pregunta p
       LEFT JOIN appEx_Reglas r ON p.IdPregunta = r.IdPregunta
       WHERE LTRIM(RTRIM(UPPER(p.OrigenDatosTipo))) = 'API'
     `);
 
-    const raiz = preguntas.filter((p: any) => !this.esDependiente(p.OrigenDatosCmd));
-    const dependientes = preguntas.filter((p: any) => this.esDependiente(p.OrigenDatosCmd));
+    const mapeo = this.mapeo();
+    const plan = this.construirPlan(filas);
+    const raiz = plan.filter((p) => !p.esDependiente);
+    const dependientes = plan.filter((p) => p.esDependiente);
 
     const resultado: OpcionCatalogoExterno[] = [];
     // idPregunta -> códigos obtenidos, para resolver el placeholder de sus dependientes.
@@ -57,58 +93,50 @@ export class CatalogosExternosService {
     // Fase 1: catálogos raíz (sin {padre}).
     for (const p of raiz) {
       try {
-        const datos = await this.llamarApiExterna(p.OrigenDatosCmd);
-        const codigos: string[] = [];
-        datos.forEach((fila) => {
-          const opcion = this.normalizarFilaExterna(fila);
-          if (!opcion) return;
-          codigos.push(opcion.codigo);
-          resultado.push({
-            id_remoto: opcion.codigo,
-            nombre_catalogo: `API_${p.IdPregunta}`,
-            codigo_catalogo: `API_${p.IdPregunta}`,
-            codigo_opcion: opcion.codigo,
-            valor_opcion: opcion.etiqueta,
-            id_padre_opcion: null,
-          });
-        });
-        codigosPorPregunta.set(p.IdPregunta, codigos);
+        const opciones = await this.llamarApiExterna(p.url, mapeo);
+        codigosPorPregunta.set(p.idPregunta, opciones.map((o) => o.codigo));
+        for (const opcion of opciones) {
+          resultado.push(this.aOpcionCatalogo(p.idPregunta, opcion, null));
+        }
       } catch (e) {
-        console.warn(`[CATALOGOS-API] Falló la pregunta raíz ${p.IdPregunta}:`, e instanceof Error ? e.message : e);
+        this.logger.warn(`Falló la pregunta raíz ${p.idPregunta}: ${this.mensajeError(e)}`);
       }
     }
 
     // Fase 2: catálogos dependientes (con {padre}), iterando por cada código del padre.
     for (const p of dependientes) {
-      const idPadre = this.resolverIdPreguntaPadre(p.ReglaVisibilidad);
+      const idPadre = this.resolverIdPreguntaPadre(p.reglaVisibilidad);
       if (idPadre === null) {
-        console.warn(`[CATALOGOS-API] Pregunta ${p.IdPregunta} usa {padre} pero no tiene regla_visibilidad.dependeDeCatalogo; se omite.`);
+        this.logger.warn(
+          `Pregunta ${p.idPregunta} usa {padre} pero no tiene regla_visibilidad.dependeDeCatalogo; se omite.`,
+        );
         continue;
       }
       const codigosPadre = codigosPorPregunta.get(idPadre) || [];
       if (codigosPadre.length === 0) {
-        console.warn(`[CATALOGOS-API] Pregunta padre ${idPadre} de ${p.IdPregunta} no tiene códigos (¿falló su llamada?); se omite.`);
+        this.logger.warn(`Pregunta padre ${idPadre} de ${p.idPregunta} no tiene códigos (¿falló su llamada?); se omite.`);
         continue;
       }
 
-      for (const codigoPadre of codigosPadre) {
-        try {
-          const url = p.OrigenDatosCmd.replaceAll(PLACEHOLDER_PADRE, codigoPadre);
-          const datos = await this.llamarApiExterna(url);
-          datos.forEach((fila) => {
-            const opcion = this.normalizarFilaExterna(fila);
-            if (!opcion) return;
-            resultado.push({
-              id_remoto: opcion.codigo,
-              nombre_catalogo: `API_${p.IdPregunta}`,
-              codigo_catalogo: `API_${p.IdPregunta}`,
-              codigo_opcion: opcion.codigo,
-              valor_opcion: opcion.etiqueta,
-              id_padre_opcion: codigoPadre,
-            });
-          });
-        } catch (e) {
-          console.warn(`[CATALOGOS-API] Falló ${p.IdPregunta} para padre=${codigoPadre}:`, e instanceof Error ? e.message : e);
+      const concurrencia = this.numeroEntorno('API_CATALOGOS_EXT_CONCURRENCIA', 4);
+      for (let i = 0; i < codigosPadre.length; i += concurrencia) {
+        const lote = codigosPadre.slice(i, i + concurrencia);
+        const resultadosLote = await Promise.all(
+          lote.map(async (codigoPadre) => {
+            try {
+              const url = sustituirCodigoPadre(p.url, codigoPadre);
+              const opciones = await this.llamarApiExterna(url, mapeo);
+              return { codigoPadre, opciones };
+            } catch (e) {
+              this.logger.warn(`Falló ${p.idPregunta} para padre=${codigoPadre}: ${this.mensajeError(e)}`);
+              return { codigoPadre, opciones: [] as OpcionExterna[] };
+            }
+          }),
+        );
+        for (const { codigoPadre, opciones } of resultadosLote) {
+          for (const opcion of opciones) {
+            resultado.push(this.aOpcionCatalogo(p.idPregunta, opcion, codigoPadre));
+          }
         }
       }
     }
@@ -116,16 +144,96 @@ export class CatalogosExternosService {
     return resultado;
   }
 
-  private esDependiente(origenDatosCmd: string | null): boolean {
-    return typeof origenDatosCmd === 'string' && origenDatosCmd.includes(PLACEHOLDER_PADRE);
+  private aOpcionCatalogo(idPregunta: number, opcion: OpcionExterna, idPadreOpcion: string | null): OpcionCatalogoExterno {
+    return {
+      id_remoto: opcion.codigo,
+      nombre_catalogo: `API_${idPregunta}`,
+      codigo_catalogo: `API_${idPregunta}`,
+      codigo_opcion: opcion.codigo,
+      valor_opcion: opcion.etiqueta,
+      id_padre_opcion: idPadreOpcion,
+    };
   }
 
-  /** Lee `{"dependeDeCatalogo": n}` de regla_visibilidad; null si no aplica o es inválida. */
+  /**
+   * Resuelve la URL de cada pregunta ANTES de particionar raíz/dependientes:
+   * la detección de {padre} se hace sobre la URL ya resuelta, no sobre la
+   * clave cruda. Una clave que no resuelve a ninguna variable de entorno se
+   * registra con detalle (qué variables se probaron) y se omite del plan —
+   * nunca entra a ninguna fase, preservando la falla aislada.
+   */
+  private construirPlan(filas: FilaPregunta[]): PlanCatalogo[] {
+    const plan: PlanCatalogo[] = [];
+    for (const fila of filas) {
+      const resolucion = this.resolverOrigen(fila.OrigenDatosCmd);
+      if (resolucion.tipo === 'sin-resolver') {
+        if (resolucion.clave) {
+          this.logger.warn(
+            `Pregunta ${fila.IdPregunta}: clave "${resolucion.clave}" sin URL configurada. ` +
+              `Defina una de: ${resolucion.variablesProbadas.join(', ')}`,
+          );
+        }
+        continue;
+      }
+      if (resolucion.legado) {
+        this.logger.warn(
+          `Pregunta ${fila.IdPregunta}: OrigenDatosCmd trae una URL completa (formato obsoleto). ` +
+            `Use una clave corta y configure API_CATALOGOS_EXT_<CLAVE>_URL en su lugar.`,
+        );
+      }
+      plan.push({
+        idPregunta: fila.IdPregunta,
+        url: resolucion.url,
+        esDependiente: esDependienteUrl(resolucion.url),
+        reglaVisibilidad: fila.ReglaVisibilidad,
+      });
+    }
+    return plan;
+  }
+
+  /**
+   * Precedencia: (1) vacío -> sin-resolver; (2) URL absoluta -> legado, se usa
+   * tal cual con warn de deprecación; (3) ruta relativa -> se concatena a
+   * API_CATALOGOS_EXT_URL (comportamiento previo, para no romper configuraciones
+   * existentes); (4) clave -> primera variable API_CATALOGOS_EXT_<CLAVE>_URL que
+   * exista; (5) ninguna variable existe -> sin-resolver, con el detalle de qué
+   * se probó.
+   */
+  private resolverOrigen(origenDatosCmd: string | null): ResolucionOrigen {
+    const valor = (origenDatosCmd ?? '').trim();
+    if (!valor) return { tipo: 'sin-resolver', clave: '', variablesProbadas: [] };
+
+    if (esUrlAbsoluta(valor)) {
+      return { tipo: 'url', url: valor, variable: null, legado: true };
+    }
+
+    if (esRutaRelativa(valor)) {
+      const base = this.configService.get<string>('API_CATALOGOS_EXT_URL', '');
+      return { tipo: 'url', url: `${base}${valor}`, variable: 'API_CATALOGOS_EXT_URL', legado: false };
+    }
+
+    const variables = nombresVariableUrl(valor);
+    for (const variable of variables) {
+      const url = this.configService.get<string>(variable);
+      if (url) return { tipo: 'url', url, variable, legado: false };
+    }
+    return { tipo: 'sin-resolver', clave: valor, variablesProbadas: variables };
+  }
+
+  /**
+   * Lee `{"dependeDeCatalogo": n}` de regla_visibilidad; null si no aplica o es inválida.
+   * El BackOffice a veces escribe el token Qn SIN comillas (`{"dependeDeCatalogo": Q10}`),
+   * lo cual no es JSON válido — se sanea antes de parsear y se acepta tanto el token
+   * como un id numérico crudo.
+   */
   private resolverIdPreguntaPadre(reglaVisibilidad: string | null): number | null {
     if (!reglaVisibilidad) return null;
     try {
-      const regla = JSON.parse(reglaVisibilidad);
-      const id = Number(regla?.dependeDeCatalogo);
+      const saneada = reglaVisibilidad.replace(/:(\s*)Q(\d+)\b/gi, ':$1"Q$2"');
+      const regla = JSON.parse(saneada);
+      const crudo = String(regla?.dependeDeCatalogo ?? '');
+      const tokenQ = crudo.match(/^Q(\d+)$/i);
+      const id = Number(tokenQ ? tokenQ[1] : crudo);
       return Number.isFinite(id) ? id : null;
     } catch {
       return null;
@@ -133,102 +241,66 @@ export class CatalogosExternosService {
   }
 
   /**
-   * Llama a la API externa con el esquema de auth configurado por .env y
-   * devuelve el arreglo de filas, tolerando que la respuesta venga envuelta en
-   * { data: [...] } o { resultado: [...] } además de un arreglo plano.
+   * Llama a la API externa con el esquema de auth y el timeout configurados,
+   * reintenta solo fallos de red/timeout (nunca 4xx) y devuelve las opciones ya
+   * normalizadas según el mapeo activo.
    */
-  private async llamarApiExterna(rutaOClave: string): Promise<unknown[]> {
-    const base = this.configService.get<string>('API_CATALOGOS_EXT_URL', '');
-    const url = rutaOClave.startsWith('http') ? rutaOClave : `${base}${rutaOClave}`;
-
+  private async llamarApiExterna(url: string, mapeo: MapeoRespuestaExterna): Promise<OpcionExterna[]> {
     const token = this.configService.get<string>('API_CATALOGOS_EXT_TOKEN', '');
     const headerAuth = this.configService.get<string>('API_CATALOGOS_EXT_AUTH_HEADER', 'Authorization');
     const prefijoAuth = this.configService.get<string>('API_CATALOGOS_EXT_AUTH_PREFIJO', 'Bearer');
+    const timeoutMs = this.numeroEntorno('API_CATALOGOS_EXT_TIMEOUT_MS', 8000);
+    const reintentos = this.numeroEntorno('API_CATALOGOS_EXT_REINTENTOS', 1);
+    const diagnostico = this.configService.get<string>('API_CATALOGOS_EXT_DIAGNOSTICO', 'false').toLowerCase() === 'true';
 
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (token) {
       headers[headerAuth] = prefijoAuth ? `${prefijoAuth} ${token}` : token;
     }
 
-    const respuesta = await fetch(url, { headers });
-    if (!respuesta.ok) {
-      throw new Error(`HTTP ${respuesta.status} en ${url}`);
-    }
-    const cuerpo: unknown = await respuesta.json();
+    let ultimoError: unknown;
+    for (let intento = 0; intento <= reintentos; intento += 1) {
+      try {
+        const respuesta = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+        if (!respuesta.ok) {
+          throw new Error(`HTTP ${respuesta.status} en ${url}`);
+        }
+        const cuerpo: unknown = await respuesta.json();
 
-    // DIAGNÓSTICO TEMPORAL: formato real de la API externa aún no confirmado.
-    // Retirar una vez validado el normalizador contra datos reales.
-    console.log(`🔎 [DIAGNOSTICO API-EXT] ${url} ->`, JSON.stringify(cuerpo).slice(0, 500));
+        if (diagnostico) {
+          this.logger.debug(`${url} -> ${JSON.stringify(cuerpo).slice(0, 500)}`);
+        }
 
-    const filas = this.extraerFilas(cuerpo);
-    if (filas.length === 0) {
-      console.warn(`[CATALOGOS-API] Respuesta de ${url} no es un arreglo reconocible; se omite.`);
-    }
-    return filas;
-  }
-
-  /**
-   * Desenvuelve la respuesta cruda a un arreglo de filas, tolerando las envolturas
-   * comunes ({data: [...]}, {resultado: [...]}, {items: [...]}) y el caso real
-   * observado en la API de catálogos: {data: {catalogos: [...]}}, donde cada
-   * elemento es un nodo raíz (ej. el país) cuyas opciones reales están en su
-   * propio arreglo `hijos`/`children` (ej. los departamentos). Solo se toma UN
-   * nivel de `hijos` — un nivel más profundo (ej. municipios anidados dentro de
-   * cada departamento) se ignora aquí a propósito: esa relación la resuelve la
-   * fase 2 ({padre}) con la pregunta hija correspondiente, para no mezclar dos
-   * catálogos distintos bajo el mismo nombre sintético "API_<IdPregunta>".
-   */
-  private extraerFilas(cuerpo: unknown): unknown[] {
-    if (Array.isArray(cuerpo)) return cuerpo;
-    if (!cuerpo || typeof cuerpo !== 'object') return [];
-
-    const obj = cuerpo as Record<string, unknown>;
-    const candidatos = [obj.data, obj.resultado, obj.items];
-    for (const candidato of candidatos) {
-      if (Array.isArray(candidato)) return candidato;
-    }
-    if (obj.data && typeof obj.data === 'object') {
-      const dataObj = obj.data as Record<string, unknown>;
-      const anidados = [dataObj.catalogos, dataObj.resultado, dataObj.items];
-      for (const candidato of anidados) {
-        if (Array.isArray(candidato)) return this.desenvolverHijos(candidato);
+        return normalizarRespuesta(cuerpo, mapeo);
+      } catch (e) {
+        ultimoError = this.esTimeout(e) ? new Error(`Timeout de ${timeoutMs}ms en ${url}`) : e;
+        // Los 4xx no mejoran reintentando; el resto (red/timeout) sí.
+        if (e instanceof Error && /^HTTP 4\d\d/.test(e.message)) break;
+        if (intento < reintentos) await this.esperar(300);
       }
     }
-    return [];
+    throw ultimoError instanceof Error ? ultimoError : new Error(String(ultimoError));
   }
 
-  /** Si los nodos son raíces envolventes con `hijos`/`children`, devuelve ese nivel; si no, los nodos tal cual. */
-  private desenvolverHijos(nodos: unknown[]): unknown[] {
-    if (nodos.length === 0) return nodos;
-    const primero = nodos[0];
-    if (typeof primero !== 'object' || primero === null) return nodos;
-    const f = primero as Record<string, unknown>;
-    const hijos = Array.isArray(f.hijos) ? f.hijos : Array.isArray(f.children) ? f.children : null;
-    if (hijos === null) return nodos;
-    // Une los hijos de TODOS los nodos raíz (normalmente hay uno solo, ej. el país).
-    return nodos.flatMap((n) => {
-      if (typeof n !== 'object' || n === null) return [];
-      const nf = n as Record<string, unknown>;
-      if (Array.isArray(nf.hijos)) return nf.hijos;
-      if (Array.isArray(nf.children)) return nf.children;
-      return [];
-    });
+  private esTimeout(e: unknown): boolean {
+    return e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
   }
 
-  /**
-   * Normaliza una fila de la API externa admitiendo variantes comunes de
-   * nombre de campo, ya que el formato exacto no está confirmado todavía.
-   */
-  private normalizarFilaExterna(fila: unknown): { codigo: string; etiqueta: string } | null {
-    if (typeof fila !== 'object' || fila === null) return null;
-    const f = fila as Record<string, unknown>;
+  private esperar(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
-    const codigo = f.codigo ?? f.id ?? f.valorCore ?? f.value ?? f.clave ?? f.codigoOpcion;
-    const etiqueta = f.nombre ?? f.descripcion ?? f.valor ?? f.label ?? f.text ?? f.nombreCorto;
+  private mensajeError(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+  }
 
-    if (codigo === undefined || codigo === null || etiqueta === undefined || etiqueta === null) {
-      return null;
-    }
-    return { codigo: String(codigo), etiqueta: String(etiqueta) };
+  private numeroEntorno(clave: string, porDefecto: number): number {
+    const crudo = this.configService.get<string>(clave, String(porDefecto));
+    const numero = Number(crudo);
+    return Number.isFinite(numero) && numero > 0 ? numero : porDefecto;
+  }
+
+  private mapeo(): MapeoRespuestaExterna {
+    return mapeoDesdeEntorno((clave) => this.configService.get<string>(clave));
   }
 }
