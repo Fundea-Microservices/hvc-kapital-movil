@@ -81,10 +81,32 @@ export class CatalogosExternosService {
       WHERE LTRIM(RTRIM(UPPER(p.OrigenDatosTipo))) = 'API'
     `);
 
+    // Cero preguntas es un fallo MUDO: sin este aviso el endpoint devuelve []
+    // sin ninguna pista de que el problema está en la configuración del BackOffice
+    // (OrigenDatosTipo distinto de 'API') y no en la API externa.
+    if (filas.length === 0) {
+      this.logger.warn(
+        "No hay preguntas con OrigenDatosTipo = 'API' en appEx_Pregunta. " +
+          'Revise que la columna diga exactamente API (se ignoran mayúsculas y espacios).',
+      );
+      return [];
+    }
+
     const mapeo = this.mapeo();
     const plan = this.construirPlan(filas);
     const raiz = plan.filter((p) => !p.esDependiente);
     const dependientes = plan.filter((p) => p.esDependiente);
+
+    if (this.diagnosticoActivo()) {
+      this.logger.debug(
+        `Preguntas API encontradas: ${filas.length} -> ` +
+          filas.map((f) => `#${f.IdPregunta} cmd="${f.OrigenDatosCmd ?? ''}"`).join(' | '),
+      );
+      this.logger.debug(
+        `Plan: ${plan.length} (raíz=${raiz.length}, dependientes=${dependientes.length}) -> ` +
+          plan.map((p) => `#${p.idPregunta} ${p.esDependiente ? 'DEP' : 'RAIZ'} ${p.url}`).join(' | '),
+      );
+    }
 
     const resultado: OpcionCatalogoExterno[] = [];
     // idPregunta -> códigos obtenidos, para resolver el placeholder de sus dependientes.
@@ -97,6 +119,15 @@ export class CatalogosExternosService {
         codigosPorPregunta.set(p.idPregunta, opciones.map((o) => o.codigo));
         for (const opcion of opciones) {
           resultado.push(this.aOpcionCatalogo(p.idPregunta, opcion, null));
+        }
+        // Una respuesta 200 que no produce opciones apunta al MAPEO (ruta de datos o
+        // nombres de campo), no a la conectividad: sin este aviso es indistinguible
+        // de una llamada que nunca se hizo.
+        if (opciones.length === 0) {
+          this.logger.warn(
+            `Pregunta raíz ${p.idPregunta}: la API respondió pero no se extrajo ninguna opción. ` +
+              `Revise API_CATALOGOS_EXT_RUTA_DATOS / _CLAVES_HIJOS / _CAMPOS_CODIGO / _CAMPOS_ETIQUETA. URL: ${p.url}`,
+          );
         }
       } catch (e) {
         this.logger.warn(`Falló la pregunta raíz ${p.idPregunta}: ${this.mensajeError(e)}`);
@@ -141,7 +172,21 @@ export class CatalogosExternosService {
       }
     }
 
+    const porPregunta = new Map<number, number>();
+    for (const fila of resultado) {
+      const id = Number(fila.nombre_catalogo.replace('API_', ''));
+      porPregunta.set(id, (porPregunta.get(id) ?? 0) + 1);
+    }
+    this.logger.log(
+      `Catálogos API: ${resultado.length} opciones de ${porPregunta.size} pregunta(s) ` +
+        `[${[...porPregunta.entries()].map(([id, n]) => `#${id}:${n}`).join(', ') || 'ninguna'}]`,
+    );
+
     return resultado;
+  }
+
+  private diagnosticoActivo(): boolean {
+    return this.configService.get<string>('API_CATALOGOS_EXT_DIAGNOSTICO', 'false').toLowerCase() === 'true';
   }
 
   private aOpcionCatalogo(idPregunta: number, opcion: OpcionExterna, idPadreOpcion: string | null): OpcionCatalogoExterno {
@@ -251,7 +296,7 @@ export class CatalogosExternosService {
     const prefijoAuth = this.configService.get<string>('API_CATALOGOS_EXT_AUTH_PREFIJO', 'Bearer');
     const timeoutMs = this.numeroEntorno('API_CATALOGOS_EXT_TIMEOUT_MS', 8000);
     const reintentos = this.numeroEntorno('API_CATALOGOS_EXT_REINTENTOS', 1);
-    const diagnostico = this.configService.get<string>('API_CATALOGOS_EXT_DIAGNOSTICO', 'false').toLowerCase() === 'true';
+    const diagnostico = this.diagnosticoActivo();
 
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (token) {
