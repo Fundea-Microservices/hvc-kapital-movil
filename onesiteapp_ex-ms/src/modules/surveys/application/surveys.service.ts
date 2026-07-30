@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { aFechaLocalSqlServer, ahoraLocalSqlServer } from '../domain/fechas';
 
 /**
  * Lee una bandera booleana de una fila SQL admitiendo varios alias de columna,
@@ -154,8 +155,13 @@ export class SurveysService {
       `, [
         idEncuesta,
         userId,
-        fechaInicio || new Date().toISOString(),
-        fechaFin || new Date().toISOString(),
+        // El dispositivo envía ISO-8601 en UTC ("...Z"). Las columnas son DATETIME
+        // (sin zona), así que insertar el string crudo guardaba la hora UTC como si
+        // fuera local y quedaba ~6 h por delante de FechaSincronizacion, que usa
+        // GETDATE() (hora local). Se convierte a hora local para que las tres
+        // columnas de la fila sean coherentes entre sí.
+        aFechaLocalSqlServer(fechaInicio) || ahoraLocalSqlServer(),
+        aFechaLocalSqlServer(fechaFin) || ahoraLocalSqlServer(),
         latitud || null,
         longitud || null,
         dispositivoId || 'APP_OFFLINE'
