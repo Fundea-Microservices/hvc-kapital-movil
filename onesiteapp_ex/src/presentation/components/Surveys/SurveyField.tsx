@@ -6,6 +6,7 @@ import * as Location from 'expo-location';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { obtenerParametroNumerico } from '../../../data/local/services/parametros.service';
 import { parsearReglaValidacion, validarValor, aplicarMascara, type ReglaParseada } from '../../../domain/validacion/reglaValidacion';
+import { esTipoNumerico, opcionesPorTipo, sanitizarEntradaNumerica } from '../../../domain/validacion/entradaNumerica';
 
 type NodoOpcion = { valor: string; hijos: NodoOpcion[] };
 
@@ -67,11 +68,19 @@ export const SurveyField = ({
     }
   }, [valor, reglaParseada]);
 
-  // Manejador centralizado para la captura y formateo de texto en tiempo real
+  // Manejador centralizado para la captura y formateo de texto en tiempo real.
+  // Precedencia: máscara del BackOffice > saneamiento numérico > texto tal cual.
+  // Si hay máscara definida, manda ella (comportamiento previo intacto).
   const handleInputChange = (textoDirecto: string) => {
-    const textoFormateado = reglaParseada.mascara
-      ? aplicarMascara(textoDirecto, reglaParseada.mascara)
-      : textoDirecto;
+    let textoFormateado: string;
+    if (reglaParseada.mascara) {
+      textoFormateado = aplicarMascara(textoDirecto, reglaParseada.mascara);
+    } else if (esTipoNumerico(tipoFormateado)) {
+      // keyboardType no basta: en Android se puede pegar texto o usar otro teclado.
+      textoFormateado = sanitizarEntradaNumerica(textoDirecto, opcionesPorTipo(tipoFormateado));
+    } else {
+      textoFormateado = textoDirecto;
+    }
 
     onChangeText(textoFormateado);
     ejecutarValidacionInstitucional(textoFormateado);
@@ -173,11 +182,32 @@ export const SurveyField = ({
 
   const renderContent = () => {
     switch (tipoFormateado) {
+      // Tipos numéricos: se aceptan las variantes en inglés y español que emite el
+      // BackOffice. NUMBER faltaba y caía al `default` (input de texto libre), que
+      // es justo por lo que un campo numérico admitía letras.
+      case 'NUMBER':
       case 'NUMERO':
+      case 'NUMERIC':
       case 'DECIMAL':
+      case 'MONEDA':
+      case 'MONTO':
+      case 'FLOAT':
       case 'ENTERO':
+      case 'INT':
+      case 'INTEGER':
       case 'EMAIL':
-      case 'TELEFONO':
+      case 'TELEFONO': {
+        // EMAIL y TELEFONO comparten esta rama pero NO son numéricos: admiten '@',
+        // '+', espacios y guiones, así que no se les aplica el filtro.
+        const esNumerico = esTipoNumerico(tipoFormateado);
+        const admiteDecimales = esNumerico && opcionesPorTipo(tipoFormateado).permiteDecimales;
+
+        let tipoTeclado: 'email-address' | 'phone-pad' | 'numeric' | 'number-pad';
+        if (tipoFormateado === 'EMAIL') tipoTeclado = 'email-address';
+        else if (reglaParseada.mascara || tipoFormateado === 'TELEFONO') tipoTeclado = 'phone-pad';
+        else if (esNumerico) tipoTeclado = admiteDecimales ? 'numeric' : 'number-pad';
+        else tipoTeclado = 'numeric';
+
         return (
           <TextInput
             className={`border-2 rounded-xl p-4 text-base text-gray-800 bg-white ${containerClasses}`}
@@ -185,11 +215,12 @@ export const SurveyField = ({
             value={valor}
             onChangeText={handleInputChange}
             onBlur={() => { ejecutarValidacionInstitucional(valor); onBlur(); }}
-            keyboardType={tipoFormateado === 'EMAIL' ? 'email-address' : reglaParseada.mascara || ['NUMERO', 'TELEFONO', 'ENTERO'].includes(tipoFormateado) ? 'phone-pad' : 'numeric'}
+            keyboardType={tipoTeclado}
             autoCapitalize="none"
             placeholder={esEditable ? "Escriba los datos aquí..." : ""}
           />
         );
+      }
 
       case 'FECHA':
       case 'DATE':
@@ -413,6 +444,16 @@ export const SurveyField = ({
           </View>
         );
 
+      case 'LABEL':
+      case 'ETIQUETA':
+      case 'TEXTO_INFORMATIVO':
+      case 'INFORMATIVO':
+        // Texto puramente informativo: no captura nada. La cabecera de etiqueta se
+        // suprime más abajo para no mostrar el mismo texto dos veces.
+        return (
+          <Text className="text-gray-600 text-sm leading-relaxed">{etiqueta}</Text>
+        );
+
       case 'FOTO':
       case 'DOCUMENTO':
       case 'IMAGEN':
@@ -465,9 +506,13 @@ export const SurveyField = ({
     }
   };
 
+  // Un LABEL ya renderiza su propio texto en renderContent(); repetir la cabecera
+  // lo mostraría dos veces. Tampoco lleva asterisco de obligatorio: no se llena.
+  const esInformativo = ['LABEL', 'ETIQUETA', 'TEXTO_INFORMATIVO', 'INFORMATIVO'].includes(tipoFormateado);
+
   return (
     <View className="w-full">
-      {etiqueta !== 'Pregunta sin etiqueta' && (
+      {!esInformativo && etiqueta !== 'Pregunta sin etiqueta' && (
         <Text className="text-gray-500 font-bold text-sm tracking-wider mb-2 ml-1">
           {etiqueta} {esObligatorio && <Text className="text-red-500">*</Text>}
         </Text>

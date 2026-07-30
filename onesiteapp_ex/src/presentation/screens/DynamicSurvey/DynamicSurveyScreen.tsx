@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator, BackHandler, Keyboard, findNodeHandle } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator, BackHandler, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import withObservables from '@nozbe/with-observables';
@@ -104,8 +104,45 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   const sectionRefs = useRef<Record<string, View | null>>({});
   const puedeSalir = useRef(false);
 
-  // Se sustituye el useState por un useRef para almacenar las coordenadas "Y" de forma silenciosa
+  // Se sustituye el useState por un useRef para almacenar las coordenadas "Y" de forma silenciosa.
   const seccionLayoutsRef = useRef<Record<string, number>>({});
+
+  /** Margen por encima del encabezado para que no quede pegado al borde superior. */
+  const MARGEN_SCROLL = 12;
+
+  /**
+   * Sección cuyo scroll está pendiente de ejecutarse. El desplazamiento NO se hace
+   * en el onPress, sino en el `onLayout` de la propia sección (ver más abajo).
+   *
+   * Por qué así: al abrir una sección, la que estaba abierta se COLAPSA y todo lo
+   * que hay debajo sube cientos de píxeles. Cualquier intento de leer la posición
+   * en el momento del tap —con un setTimeout fijo o con la Y cacheada— usa el
+   * layout ANTERIOR y aterriza a media sección o más abajo.
+   *
+   * `onLayout` se dispara justo cuando el layout ya se recalculó y trae la Y buena,
+   * así que es el único momento fiable. Tampoco usa `measureLayout`: con la Nueva
+   * Arquitectura (Fabric) éste rechaza el número de `findNodeHandle` y falla con
+   * "measureLayout must be called with a ref to a native component".
+   */
+  const scrollPendienteRef = useRef<string | null>(null);
+
+  const desplazarASeccion = (idSeccion: string) => {
+    scrollPendienteRef.current = idSeccion;
+    // Ventana de gracia: mientras siga pendiente, cada onLayout de esa sección
+    // vuelve a corregir la posición (los SELECT y matrices pesados asientan su
+    // layout en varias pasadas). Pasado ese margen se deja de reposicionar para
+    // no pelear con el scroll manual del encuestador.
+    setTimeout(() => {
+      if (scrollPendienteRef.current === idSeccion) scrollPendienteRef.current = null;
+    }, 600);
+  };
+
+  /** Llamado desde el onLayout de cada sección, con la Y ya recalculada. */
+  const registrarLayoutSeccion = (idSeccion: string, y: number) => {
+    seccionLayoutsRef.current[idSeccion] = y;
+    if (scrollPendienteRef.current !== idSeccion) return;
+    scrollViewRef.current?.scrollTo({ y: Math.max(0, y - MARGEN_SCROLL), animated: true });
+  };
 
   // Extraído del router para evitar colapsos si el modelo 'encuesta' está en la fase de carga
   const idEncuestaSeguro = route?.params?.idEncuesta || '';
@@ -339,6 +376,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
 
     pregSeccion.forEach(p => {
       if (!isQuestionVisible(p)) return;
+      if (esTipoLabel(p.tipo_dato)) return; // Informativo: no cuenta para el progreso
       if (p.tipo_dato?.toUpperCase() === 'MATRIZ') {
         const hijas = preguntas.filter(h => String(h.id_matriz_padre) === String(p.id));
         const filas = instanciasMatriz[p.id] || [];
@@ -374,6 +412,15 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
 
   // Detección tolerante del tipo (el resto del código normaliza igual; ver SurveyField)
   const esTipoCalculo = (t?: string | null) => (t || '').trim().toUpperCase() === 'CALCULO';
+
+  /**
+   * Tipos puramente informativos: muestran un texto y NO capturan nada. Deben
+   * excluirse de la validación de obligatorios, del semáforo de sección y de la
+   * persistencia — si no, un LABEL marcado obligatorio por error en el BackOffice
+   * bloquearía "Finalizar" sin que exista campo alguno que llenar.
+   */
+  const esTipoLabel = (t?: string | null) =>
+    ['LABEL', 'ETIQUETA', 'TEXTO_INFORMATIVO', 'INFORMATIVO'].includes((t || '').trim().toUpperCase());
 
   /**
    * Motor genérico de cálculo. Recibe un mapa de respuestas y devuelve una copia con
@@ -603,6 +650,14 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
 
       const batchCreate = Object.entries(mapa)
         .filter(([_, valor]) => valor !== '')
+        // Los informativos no capturan. Se filtran por si quedó un valor heredado
+        // de cuando esa pregunta era de otro tipo en el BackOffice: sin esto, un
+        // borrador antiguo lo restauraría y acabaría viajando a /surveys/submit.
+        .filter(([key]) => {
+          const idPregunta = key.split('_')[0];
+          const pregunta = preguntas.find(p => String(p.id) === idPregunta);
+          return !esTipoLabel(pregunta?.tipo_dato);
+        })
         .map(([key, valor]) => {
           const partes = key.split('_');
           const idPregunta = partes[0];
@@ -701,6 +756,9 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     const seccionesInvalidas: string[] = [];
 
     const revisarPregunta = (p: LocalEstructuraPregunta, valor: string | undefined): 'ok' | 'faltante' | 'invalido' => {
+      // Los informativos no se llenan: aunque el BackOffice los marque obligatorios
+      // por error, no deben bloquear el cierre de la encuesta.
+      if (esTipoLabel(p.tipo_dato)) return 'ok';
       const vacio = !valor || String(valor).trim() === '' || valor === '[]';
       if (p.es_obligatorio === 1 && vacio) return 'faltante';
       if (vacio) return 'ok'; // opcional y vacío: nada que validar
@@ -991,8 +1049,10 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
           return (
             <View key={seccion.id} ref={el => { sectionRefs.current[seccion.id] = el; }}
               onLayout={(e) => {
-                //Se escribe en la referencia en lugar del estado para no disparar ciclos prematuros
-                seccionLayoutsRef.current[seccion.id] = e.nativeEvent.layout.y;
+                // Se escribe en la referencia en lugar del estado para no disparar ciclos
+                // prematuros, y se aprovecha para ejecutar el scroll pendiente: aquí la Y
+                // ya está recalculada tras colapsar/expandir.
+                registrarLayoutSeccion(seccion.id, e.nativeEvent.layout.y);
               }}
               className="mb-3 bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100"
             >
@@ -1001,15 +1061,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                 onPress={() => {
                   const nuevaAbierta = estaAbierta ? null : seccion.id;
                   setSeccionExpandidaId(nuevaAbierta);
-                  if (nuevaAbierta) {
-                    setTimeout(() => {
-                      // Desplazamiento basado en la referencia estable en memoria
-                      const posicionY = seccionLayoutsRef.current[nuevaAbierta];
-                      if (posicionY !== undefined) {
-                        scrollViewRef.current?.scrollTo({ y: posicionY - 10, animated: true });
-                      }
-                    }, 280);
-                  }
+                  if (nuevaAbierta) desplazarASeccion(nuevaAbierta);
                 }}
                 className={`flex-row items-center justify-between p-5 ${estaAbierta ? 'bg-blue-50/40' : 'bg-white'}`}
               >
