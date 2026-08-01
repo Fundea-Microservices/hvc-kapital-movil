@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
-import { aFechaLocalSqlServer, ahoraLocalSqlServer } from '../domain/fechas';
+import {
+  aFechaLocalSqlServer,
+  ahoraLocalSqlServer,
+  esZonaHorariaValida,
+  ZONA_HORARIA_POR_DEFECTO,
+} from '../domain/fechas';
 
 /**
  * Lee una bandera booleana de una fila SQL admitiendo varios alias de columna,
@@ -20,7 +26,29 @@ function leerBandera(row: Record<string, unknown>, ...alias: string[]): 0 | 1 {
 
 @Injectable()
 export class SurveysService {
-  constructor(private readonly dataSource: DataSource) { }
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly configService: ConfigService,
+  ) { }
+
+  /**
+   * Zona horaria de la operación. Se declara EXPLÍCITAMENTE en vez de heredar la del
+   * proceso: en un servidor Linux con TZ=UTC —lo habitual— heredarla hacía que las
+   * fechas del dispositivo se guardaran 6 h adelantadas, con la fecha correcta y solo
+   * la hora desplazada. Si la zona configurada no es válida se avisa y se usa la de
+   * por defecto, en vez de corromper las capturas en silencio.
+   */
+  private zonaHoraria(): string {
+    const configurada = this.configService.get<string>('APP_ZONA_HORARIA', ZONA_HORARIA_POR_DEFECTO);
+    if (!esZonaHorariaValida(configurada)) {
+      console.warn(
+        `[FECHAS] APP_ZONA_HORARIA="${configurada}" no es una zona IANA válida; ` +
+        `se usa ${ZONA_HORARIA_POR_DEFECTO}.`,
+      );
+      return ZONA_HORARIA_POR_DEFECTO;
+    }
+    return configurada;
+  }
 
   /**
    * El servicio obtiene la estructura maestra de la encuesta.
@@ -139,6 +167,8 @@ export class SurveysService {
       dispositivoId
     } = payload;
 
+    const zona = this.zonaHoraria();
+
     // El sistema inicia una Transacción SQL para asegurar integridad.
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -160,8 +190,8 @@ export class SurveysService {
         // fuera local y quedaba ~6 h por delante de FechaSincronizacion, que usa
         // GETDATE() (hora local). Se convierte a hora local para que las tres
         // columnas de la fila sean coherentes entre sí.
-        aFechaLocalSqlServer(fechaInicio) || ahoraLocalSqlServer(),
-        aFechaLocalSqlServer(fechaFin) || ahoraLocalSqlServer(),
+        aFechaLocalSqlServer(fechaInicio, zona) || ahoraLocalSqlServer(zona),
+        aFechaLocalSqlServer(fechaFin, zona) || ahoraLocalSqlServer(zona),
         latitud || null,
         longitud || null,
         dispositivoId || 'APP_OFFLINE'
