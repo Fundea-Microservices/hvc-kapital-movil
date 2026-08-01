@@ -59,8 +59,13 @@ export class SyncService {
       `SELECT UltimaModificacion FROM Control_Versiones_AppEx WHERE TablaNombre = 'Cat_Menu_AppEx'`
     );
 
-    // Solo consultamos si nunca ha sincronizado o si hay una versión más reciente
-    if (!menuSyncDate || new Date(versionMenu[0].UltimaModificacion) > new Date(menuSyncDate)) {
+    // Solo consultamos si nunca ha sincronizado o si hay una versión más reciente.
+    // Si NO existe la fila de control, se asume que hay cambios y se deja que el filtro
+    // por FechaModificacion haga el trabajo: es una optimización, no una condición de
+    // correctitud. Acceder a versionMenu[0] sin comprobar lanzaba un TypeError (500 en
+    // TODA sincronización incremental) cuando la fila faltaba o estaba mal nombrada.
+    const ultimaModMenu = versionMenu?.[0]?.UltimaModificacion ?? null;
+    if (!menuSyncDate || !ultimaModMenu || new Date(ultimaModMenu) > new Date(menuSyncDate)) {
       
       // Obtenemos los deltas reales
       const menusQuery = menuSyncDate 
@@ -104,7 +109,9 @@ export class SyncService {
       `SELECT UltimaModificacion FROM Control_Versiones_AppEx WHERE TablaNombre = 'Cat_Parametros_AppEx'`
     );
 
-    if (!paramSyncDate || new Date(versionParam[0].UltimaModificacion) > new Date(paramSyncDate)) {
+    // Mismo blindaje que en el bloque de menú (ver comentario arriba).
+    const ultimaModParam = versionParam?.[0]?.UltimaModificacion ?? null;
+    if (!paramSyncDate || !ultimaModParam || new Date(ultimaModParam) > new Date(paramSyncDate)) {
       const paramQuery = paramSyncDate 
         ? `SELECT * FROM Cat_Parametros_AppEx WHERE FechaModificacion > @0`
         : `SELECT * FROM Cat_Parametros_AppEx`; 
