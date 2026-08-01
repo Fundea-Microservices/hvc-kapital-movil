@@ -71,20 +71,30 @@ const leerFechasSyncPorTabla = async (): Promise<Record<string, string | null>> 
  * Si un ACK falla, la fecha no avanza y el próximo sync re-pide esos deltas (upsert inocuo).
  */
 const confirmarYSellarSincronizacion = async () => {
-  const ahora = new Date();
   for (const tabla of TABLAS_AUDITADAS) {
     try {
-      await apiClient.post('/sync/ack', { tablaNombre: tabla, exitoso: true });
+      const respuesta = await apiClient.post<unknown>('/sync/ack', { tablaNombre: tabla, exitoso: true });
+
+      // Se sella con el reloj del SERVIDOR, que es la misma referencia contra la que se
+      // filtran los deltas (`FechaModificacion > @0`). Con el reloj del dispositivo, un
+      // móvil adelantado sellaba una fecha futura y dejaba fuera del filtro registros
+      // que sí habían cambiado: se ocultaban de forma permanente, sin ningún error.
+      // Si el servidor no devuelve la marca (versión anterior del backend), se cae al
+      // reloj local para no bloquear la sincronización.
+      const cuerpo = respuesta.data;
+      const marcaServidor = esFilaServidor(cuerpo) ? textoDe(cuerpo, 'timestampServidor') : null;
+      const sello = marcaServidor ? new Date(marcaServidor) : new Date();
+      const selloValido = Number.isNaN(sello.getTime()) ? new Date() : sello;
 
       await database.write(async () => {
         const coleccion = database.collections.get<MetadataSync>('metadata_sync');
         const existentes = await coleccion.query(Q.where('tabla_nombre', tabla)).fetch();
         if (existentes.length > 0) {
-          await existentes[0].update((r: MetadataSync) => { r.fecha_ultima_sinc = ahora; });
+          await existentes[0].update((r: MetadataSync) => { r.fecha_ultima_sinc = selloValido; });
         } else {
           await coleccion.create((r: MetadataSync) => {
             r.tabla_nombre = tabla;
-            r.fecha_ultima_sinc = ahora;
+            r.fecha_ultima_sinc = selloValido;
           });
         }
       });
@@ -246,8 +256,15 @@ export const runFullSync = async () => {
         const preguntasServidor = obtenerCambiosTabla(structChanges, 'local_estructura_pregunta').created;
 
         const mergedChanges = {
+          // El spread de `coreChanges` aporta las tablas que el backend emite ya con la
+          // forma nativa de WatermelonDB (p. ej. cat_parametros_appex). Las que se
+          // declaran explícitamente más abajo lo sobrescriben, porque necesitan mapeo.
           ...(esFilaServidor(coreChanges) ? coreChanges : {}),
-          ...(esFilaServidor(catChanges) ? catChanges : {}),
+
+          // NO se hace spread de `catChanges`: /surveys/catalogs emite la tabla
+          // `local_catalogos`, que es vestigial y NO la que lee el motor de formularios
+          // (esa es `local_catalogo_opciones`, poblada por sincronizarCatalogos). Lo
+          // único que producía era un warning de "tabla desconocida" en cada sync.
 
           local_encuesta: {
             created: encuestasServidor.map((row) => ({

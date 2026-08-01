@@ -51,10 +51,24 @@ export const MAPEO_POR_DEFECTO: MapeoRespuestaExterna = {
   ordenarAlfabetico: true,
 };
 
-const dividirLista = (valor: string | undefined): string[] | null => {
+/** Lista de alternativas separadas por coma (ej. nombres de campo a probar en orden). */
+const dividirLista = (valor: string | undefined): string[] | null => dividirPor(valor, ',');
+
+/**
+ * Ruta jerárquica separada por PUNTO (ej. `data.catalogos` -> ['data','catalogos']).
+ *
+ * Estaba usando `dividirLista`, que parte por coma: `data.catalogos` producía
+ * `['data.catalogos']` y `leerRuta` buscaba una clave llamada literalmente
+ * "data.catalogos", que no existe. El fallo era INVISIBLE porque `extraerFilas` tiene
+ * un respaldo tolerante que prueba `data.{catalogos,resultado,items}` a mano: la API
+ * real funcionaba y la variable de entorno no hacía absolutamente nada.
+ */
+const dividirRuta = (valor: string | undefined): string[] | null => dividirPor(valor, '.');
+
+const dividirPor = (valor: string | undefined, separador: string): string[] | null => {
   if (valor === undefined) return null;
   const partes = valor
-    .split(',')
+    .split(separador)
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
   return partes.length > 0 ? partes : null;
@@ -67,7 +81,7 @@ const dividirLista = (valor: string | undefined): string[] | null => {
  * valor por defecto correspondiente — nunca falla por configuración incompleta.
  */
 export function mapeoDesdeEntorno(leer: (clave: string) => string | undefined): MapeoRespuestaExterna {
-  const rutaDatos = dividirLista(leer('API_CATALOGOS_EXT_RUTA_DATOS'));
+  const rutaDatos = dividirRuta(leer('API_CATALOGOS_EXT_RUTA_DATOS'));
   const clavesHijos = dividirLista(leer('API_CATALOGOS_EXT_CLAVES_HIJOS'));
   const camposCodigo = dividirLista(leer('API_CATALOGOS_EXT_CAMPOS_CODIGO'));
   const camposEtiqueta = dividirLista(leer('API_CATALOGOS_EXT_CAMPOS_ETIQUETA'));

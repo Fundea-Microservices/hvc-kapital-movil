@@ -1,3 +1,4 @@
+import { join } from 'path';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config'; // Importante añadir ConfigService
 import { AppController } from './app.controller';
@@ -15,7 +16,14 @@ import { SurveysModule } from './modules/surveys/surveys.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true, // Hace que las variables del .env estén disponibles en toda la app
-      envFilePath: '.env', // Especifica explícitamente el archivo a leer
+      // Ruta ABSOLUTA calculada desde el propio archivo. Una ruta relativa se resuelve
+      // contra el directorio de trabajo del proceso, que bajo un gestor como pm2 puede
+      // no ser la raíz del proyecto: entonces el .env no se lee y —si las credenciales
+      // de BD vienen del entorno del sistema— la app arranca bien y solo fallan las
+      // variables nuevas, que es un síntoma desconcertante de diagnosticar.
+      // __dirname es dist/ en ejecución y src/ en desarrollo; en ambos casos el .env
+      // está un nivel por encima.
+      envFilePath: join(__dirname, '..', '.env'),
     }),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],

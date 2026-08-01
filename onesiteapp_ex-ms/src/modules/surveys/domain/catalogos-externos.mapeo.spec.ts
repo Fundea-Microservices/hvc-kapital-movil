@@ -223,6 +223,24 @@ describe('mapeoDesdeEntorno', () => {
     expect(mapeoDesdeEntorno(leerVacio)).toEqual(MAPEO_POR_DEFECTO);
   });
 
+  it('RUTA_DATOS se parte por PUNTO, no por coma', () => {
+    // Partirla por coma producia ['data.catalogos'] y leerRuta buscaba una clave con ese
+    // nombre literal, que no existe. El fallo era invisible porque extraerFilas tiene un
+    // respaldo que prueba data.{catalogos,resultado,items} a mano: la variable de entorno
+    // "funcionaba" sin hacer nada, y no habria servido para otra API.
+    const entorno: Record<string, string> = { API_CATALOGOS_EXT_RUTA_DATOS: 'respuesta.contenido.lista' };
+    expect(mapeoDesdeEntorno((clave) => entorno[clave]).rutaDatos).toEqual(['respuesta', 'contenido', 'lista']);
+  });
+
+  it('una RUTA_DATOS distinta a la por defecto SI cambia de donde se extraen las filas', () => {
+    // Prueba de que la variable ahora es funcional de verdad, no solo que parsea bien.
+    const entorno: Record<string, string> = { API_CATALOGOS_EXT_RUTA_DATOS: 'payload.registros' };
+    const mapeo = mapeoDesdeEntorno((clave) => entorno[clave]);
+    const cuerpo = { payload: { registros: [{ valorCore: '7', nombre: 'SIETE' }] } };
+    const opciones = normalizarRespuesta(cuerpo, mapeo);
+    expect(opciones).toEqual([{ codigo: '7', etiqueta: 'SIETE', orden: 0 }]);
+  });
+
   it('parsea listas separadas por coma para camposCodigo/camposEtiqueta/clavesHijos', () => {
     const entorno: Record<string, string> = {
       API_CATALOGOS_EXT_CAMPOS_CODIGO: 'codigoExterno, otraClave',

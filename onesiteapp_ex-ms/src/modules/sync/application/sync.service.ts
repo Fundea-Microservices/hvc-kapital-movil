@@ -160,7 +160,16 @@ export class SyncService {
       );
     }
 
-    return { message: 'ACK recibido y auditado' };
+    // Se devuelve la hora del MOTOR, no la del dispositivo ni la del proceso Node.
+    // La app la usa para sellar su marca de última sincronización, y los deltas se
+    // filtran con `FechaModificacion > @0` sobre esa misma referencia: si la app
+    // sellara con su propio reloj, un móvil adelantado dejaría fuera del filtro
+    // registros que sí cambiaron y los ocultaría de forma permanente.
+    const [{ ahora }] = await this.dataSource.query(
+      `SELECT CONVERT(VARCHAR(23), GETDATE(), 126) AS ahora`,
+    );
+
+    return { message: 'ACK recibido y auditado', timestampServidor: ahora };
   }
 
   // 3. Método: ObtenerParametros (GET) - Regla 3.1
