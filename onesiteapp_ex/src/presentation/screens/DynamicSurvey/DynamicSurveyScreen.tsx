@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator, BackHandler, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -25,31 +25,19 @@ import {
   type RawCatalogoOpcion,
 } from '../../../data/local/types/raw.types';
 import { parsearReglaValidacion, validarValor } from '../../../domain/validacion/reglaValidacion';
+import { aPreguntaEncuesta } from '../../../data/local/adapters/preguntaAdapter';
+import type { PreguntaEncuesta } from '../../../domain/encuesta/tipos';
+import { esTipoCalculo, esTipoLabel, esTipoMatriz } from '../../../domain/encuesta/tipos';
+import { parseNumeroLocal } from '../../../domain/encuesta/numeros';
+import { resolverIdDesdeToken, sanearTokenQEnJSON } from '../../../domain/encuesta/tokens';
+import { evaluarVisibilidad } from '../../../domain/encuesta/visibilidad';
+import { aplicarCalculos as calcularDominio } from '../../../domain/encuesta/calculo';
 
 /** Nodo del árbol de opciones con drill-down jerárquico (SELECT anidado). */
 interface NodoOpcionArbol {
   valor: string;
   hijos: NodoOpcionArbol[];
 }
-
-/**
- * Convierte un valor capturado a número tolerando el separador decimal en coma
- * (teclado en español, ej. "12,5") además del punto ("12.5"), y separadores de
- */
-const parseNumeroLocal = (valorCrudo: string): number => {
-  let limpio = String(valorCrudo || '').trim().replace(/[^0-9.,-]/g, '');
-  const ultimoPunto = limpio.lastIndexOf('.');
-  const ultimaComa = limpio.lastIndexOf(',');
-
-  if (ultimaComa > ultimoPunto) {
-    // La coma es el separador decimal; cualquier punto previo es de miles.
-    limpio = limpio.replace(/\./g, '').replace(',', '.');
-  } else {
-    // El punto es el separador decimal (o no hay separadores); las comas son de miles.
-    limpio = limpio.replace(/,/g, '');
-  }
-  return parseFloat(limpio);
-};
 
 /**
  * Nombre de catálogo bajo el que se buscan las opciones de una pregunta en
@@ -87,6 +75,28 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   const [isSaving, setIsSaving] = useState(false);
   const [respuestas, setRespuestas] = useState<Record<string, string>>({});
   const [instanciasMatriz, setInstanciasMatriz] = useState<Record<string, string[]>>({});
+
+  /**
+   * Preguntas aplanadas al contrato del dominio. El motor (visibilidad, cálculo,
+   * catálogos) trabaja sobre estos objetos planos y NO sobre los modelos de
+   * WatermelonDB: esa es la razón por la que se puede probar con Node plano.
+   * Se memoiza para no reconstruirlos en cada render.
+   */
+  const preguntasDominio = useMemo<PreguntaEncuesta[]>(
+    () => preguntas.map(aPreguntaEncuesta),
+    [preguntas],
+  );
+
+  /** Acceso por id, para traducir un modelo a su equivalente de dominio. */
+  const dominioPorId = useMemo(() => {
+    const mapa = new Map<string, PreguntaEncuesta>();
+    preguntasDominio.forEach(p => mapa.set(p.id, p));
+    return mapa;
+  }, [preguntasDominio]);
+
+  /** Traduce un modelo a su forma de dominio (aplana al vuelo si aún no está en el mapa). */
+  const aDominio = (p: LocalEstructuraPregunta): PreguntaEncuesta =>
+    dominioPorId.get(String(p.id)) ?? aPreguntaEncuesta(p);
   const [seccionExpandidaId, setSeccionExpandidaId] = useState<string | null>(null);
 
   // A. Decisión Arquitectónica de Telemetría: Estado local para capturar el instante exacto en que se monta la vista.
@@ -267,100 +277,22 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   };
 
   /**
-   * Traduce una referencia de regla a un id de pregunta real. El BackOffice escribe
-   * el token "Qn" (ej. `Q53=="SI"`); n se resuelve primero contra el `id` de la
-   * pregunta y, si no existe, contra su `orden` (prefiriendo la misma sección).
-   * Si la referencia no es un token Qn se devuelve tal cual (id crudo).
+   * Visibilidad de una pregunta. La lógica vive en `domain/encuesta/visibilidad`
+   * (probada con 21 casos); aquí solo se traduce el modelo al contrato del dominio
+   * y se registra el aviso cuando el BackOffice manda una regla inválida.
    */
-  const resolverIdDesdeToken = (referencia: string, preguntaActual: LocalEstructuraPregunta): string => {
-    const tokenQ = String(referencia).match(/^Q(\d+)$/i);
-    if (!tokenQ) return String(referencia);
-    const numero = tokenQ[1];
-    const raw = (x: LocalEstructuraPregunta) => leerRaw<RawPregunta>(x);
-
-    let origen = preguntas.find(x => String(x.id) === numero);
-    if (!origen) {
-      const candidatos = preguntas.filter(x => String(raw(x).orden) === numero);
-      const seccionActual = String(raw(preguntaActual).id_seccion);
-      origen = candidatos.find(x => String(raw(x).id_seccion) === seccionActual) || candidatos[0];
+  const isQuestionVisible = (
+    p: LocalEstructuraPregunta,
+    uuidFila?: string | null,
+    snap: Record<string, string> = respuestas,
+  ): boolean => {
+    const resultado = evaluarVisibilidad(aDominio(p), preguntasDominio, snap, uuidFila);
+    if (resultado.errorRegla) {
+      console.warn(`[VISIBILIDAD] Regla inválida en "${p.etiqueta}":`, p.regla_visibilidad, resultado.errorRegla);
     }
-    return origen ? String(origen.id) : String(referencia);
+    return resultado.visible;
   };
 
-  /**
-   * El BackOffice a veces escribe el token Qn SIN comillas como valor JSON
-   * (ej. `{"dependeDeCatalogo": Q10}`), lo cual no es JSON válido y hace que
-   * JSON.parse falle por completo. Se envuelve el token en comillas antes de
-   * parsear (`Q10` -> `"Q10"`) para que quede como un string parseable; el
-   * llamador debe resolverlo después con resolverIdDesdeToken.
-   */
-  const sanearTokenQEnJSON = (str: string): string => str.replace(/:(\s*)Q(\d+)\b/gi, ':$1"Q$2"');
-
-  const isQuestionVisible = (p: LocalEstructuraPregunta, uuidFila?: string | null, snap: Record<string, string> = respuestas) => {
-    if (!p.regla_visibilidad) return true;
-
-    // Resuelve la respuesta de una pregunta dependiente. Dentro de una fila de matriz
-    // las respuestas se almacenan con la clave "idPregunta_uuidFila"; por eso se
-    // prioriza esa variante antes de caer a la clave global.
-    const resolverRespuesta = (idPreg: string): string => {
-      if (uuidFila) {
-        const scoped = snap[`${idPreg}_${uuidFila}`];
-        if (scoped !== undefined) return scoped;
-      }
-      return snap[idPreg] ?? '';
-    };
-
-    // Comparación tolerante a mayúsculas/acentos ("Sí" === "SI" === "si")
-    const normalizarComparacion = (v: unknown) =>
-      String(v ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
-
-    try {
-      const reglaStr = p.regla_visibilidad.toString().trim();
-      if (reglaStr.startsWith('{')) {
-        const regla = JSON.parse(sanearTokenQEnJSON(reglaStr));
-        // Cascada de catálogos (Padre-Hijo-Nieto): solo es visible si su pregunta
-        // padre inmediata ya tiene una respuesta seleccionada.
-        if (regla.dependeDeCatalogo) {
-          const idPadre = resolverIdDesdeToken(String(regla.dependeDeCatalogo), p);
-          const respuestaPadre = resolverRespuesta(idPadre);
-          return !!respuestaPadre && respuestaPadre.toString().trim() !== '';
-        }
-        return normalizarComparacion(resolverRespuesta(regla.dependeDe)) === normalizarComparacion(regla.valorEsperado);
-      }
-      // Comparación simple: admite tanto un id crudo (`53=="SI"`) como el token del
-      // BackOffice (`Q53=="SI"`), que se traduce al id real de la pregunta.
-      const matches = reglaStr.match(/(\w+)\s*(==|===|=)\s*['"]([^'"]+)['"]/);
-      if (matches) {
-        const [_, referencia, __, valorEsperado] = matches;
-        const idReal = resolverIdDesdeToken(referencia, p);
-        return normalizarComparacion(resolverRespuesta(idReal)) === normalizarComparacion(valorEsperado);
-      }
-      // Evaluación genérica (reglas compuestas): primero se sustituyen los tokens Qn
-      // por el valor de la pregunta referenciada, luego las claves crudas.
-      let reglaEvaluada = reglaStr.replace(/\bQ(\d+)\b/gi, (_m, num) => {
-        const valorToken = resolverRespuesta(resolverIdDesdeToken(`Q${num}`, p));
-        return `'${String(valorToken).replace(/'/g, "\\'")}'`;
-      });
-      const fuente: Record<string, string> = { ...snap };
-      if (uuidFila) {
-        const sufijo = `_${uuidFila}`;
-        Object.keys(snap).forEach(k => {
-          if (k.endsWith(sufijo)) fuente[k.slice(0, -sufijo.length)] = snap[k];
-        });
-      }
-      Object.keys(fuente).forEach(key => {
-        const val = fuente[key] ? `'${fuente[key]}'` : "''";
-        // Límites de palabra para no corromper números ya sustituidos.
-        reglaEvaluada = reglaEvaluada.replace(new RegExp(`\\b${key}\\b`, 'g'), val);
-      });
-      return Function(`"use strict"; return (${reglaEvaluada})`)();
-    } catch (e) {
-      // Una regla mal formada haría que la pregunta quede siempre visible sin aviso,
-      // indistinguible de "sin regla". Se advierte para poder corregirla en el BackOffice.
-      console.warn(`[VISIBILIDAD] Regla inválida en "${p.etiqueta}":`, p.regla_visibilidad, e);
-      return true;
-    }
-  };
 
   const getSeccionStatusColor = (idSeccion: string) => {
     //const pregSeccion = preguntas.filter(p => p.id_seccion === idSeccion && (!p.id_matriz_padre || p.id_matriz_padre === 'null'));
@@ -410,116 +342,20 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     return 'bg-gray-200'; // Gris
   };
 
-  // Detección tolerante del tipo (el resto del código normaliza igual; ver SurveyField)
-  const esTipoCalculo = (t?: string | null) => (t || '').trim().toUpperCase() === 'CALCULO';
-
   /**
-   * Tipos puramente informativos: muestran un texto y NO capturan nada. Deben
-   * excluirse de la validación de obligatorios, del semáforo de sección y de la
-   * persistencia — si no, un LABEL marcado obligatorio por error en el BackOffice
-   * bloquearía "Finalizar" sin que exista campo alguno que llenar.
-   */
-  const esTipoLabel = (t?: string | null) =>
-    ['LABEL', 'ETIQUETA', 'TEXTO_INFORMATIVO', 'INFORMATIVO'].includes((t || '').trim().toUpperCase());
-
-  /**
-   * Motor genérico de cálculo. Recibe un mapa de respuestas y devuelve una copia con
-   * todos los campos tipo CALCULO resueltos. 
+   * Motor de cálculo. La lógica vive en `domain/encuesta/calculo` (14 casos de prueba,
+   * incluidos los corchetes de mathjs, el cálculo por fila de matriz y el
+   * encadenamiento). Aquí solo se traducen los tipos y se registran los avisos.
    */
   const aplicarCalculos = (
     base: Record<string, string>,
-    matrices: Record<string, string[]> = instanciasMatriz
+    matrices: Record<string, string[]> = instanciasMatriz,
   ): Record<string, string> => {
-    const nuevasRespuestas = { ...base };
-    let huboCambios = true;
-    let iteraciones = 0;
-
-    const esLadoOperativo = (s: string) => /[+\-*/^%]/.test(s) || /[a-zA-Z_]\w*\s*\(/.test(s);
-
-    while (huboCambios && iteraciones < 5) {
-      huboCambios = false;
-      iteraciones++;
-      preguntas
-        .filter(p => esTipoCalculo(p.tipo_dato) && (leerRaw<RawPregunta>(p).sintaxis_calculo || p.sintaxis_calculo))
-        .forEach(p => {
-          try {
-            const rawP = leerRaw<RawPregunta>(p);
-
-            // El diseño documenta placeholders con corchetes ([Q92]-[Q91] o [92]-[91]);
-            // se normalizan a tokens Qn ANTES de evaluar — de lo contrario mathjs
-            // interpretaría los corchetes como matrices y el resultado sería NaN.
-            const rawFormula = String(rawP.sintaxis_calculo || "").replace(/\[\s*Q?(\d+)\s*\]/gi, 'Q$1');
-            const partes = rawFormula.split('=');
-            let expr = partes[0];
-            if (partes.length > 1) {
-              expr = partes.find(esLadoOperativo)
-                || partes.reduce((a, b) => ((b.match(/Q\d+/gi) || []).length > (a.match(/Q\d+/gi) || []).length ? b : a));
-            }
-            const exprBase = expr.trim();
-
-            // Tokens únicos (Q + dígitos, insensible a mayúsculas).
-            const tokens = [...new Set((exprBase.match(/\bQ\d+\b/gi) || []).map(t => t.toUpperCase()))];
-            if (tokens.length === 0) return;
-
-            // Un CALCULO hijo de matriz se evalúa una vez POR FILA; uno de nivel raíz,
-            // una sola vez con contexto global (uuidFila = null).
-            const idMatrizPadre = rawP.id_matriz_padre;
-            const esHijaDeMatriz = !!idMatrizPadre &&
-              String(idMatrizPadre).toLowerCase() !== 'null' && String(idMatrizPadre) !== '';
-            const contextos: (string | null)[] = esHijaDeMatriz
-              ? (matrices[String(idMatrizPadre)] || [])
-              : [null];
-
-            contextos.forEach(uuidFila => {
-              let formulaStr = exprBase;
-              let puedeCalcular = true;
-
-              tokens.forEach(token => {
-                const idReal = resolverIdDesdeToken(token, p);
-                const preguntaOrigen = preguntas.find(x => String(x.id) === idReal);
-
-                if (preguntaOrigen) {
-                  // Dentro de una fila se prioriza el valor de ESA fila; si el token
-                  // referencia un campo fuera de la matriz, cae a la clave global.
-                  const claveScoped = uuidFila ? `${preguntaOrigen.id}_${uuidFila}` : null;
-                  const valorCrudo = (claveScoped && nuevasRespuestas[claveScoped] !== undefined)
-                    ? nuevasRespuestas[claveScoped]
-                    : (nuevasRespuestas[preguntaOrigen.id] || "");
-                  const parseado = parseNumeroLocal(valorCrudo);
-
-                  if (isNaN(parseado)) {
-                    puedeCalcular = false;
-                  } else {
-                    formulaStr = formulaStr.replace(new RegExp(`\\b${token}\\b`, 'gi'), String(parseado));
-                  }
-                } else {
-                  puedeCalcular = false;
-                  console.warn(`[CALCULO] token ${token} no resuelve a ninguna pregunta (ni por id ni por orden) en campo "${p.etiqueta}"`);
-                }
-              });
-
-              const claveDestino = uuidFila ? `${p.id}_${uuidFila}` : p.id;
-
-              if (puedeCalcular) {
-                const ejecutor = evaluate(formulaStr);
-                const stringFinal = parseFloat(Number(ejecutor).toFixed(2)).toString();
-
-                if (nuevasRespuestas[claveDestino] !== stringFinal) {
-                  nuevasRespuestas[claveDestino] = stringFinal;
-                  huboCambios = true;
-                }
-              } else if (nuevasRespuestas[claveDestino] !== undefined && nuevasRespuestas[claveDestino] !== '') {
-                nuevasRespuestas[claveDestino] = '';
-                huboCambios = true;
-              }
-            });
-          } catch (e) {
-            console.warn("[CALCULO] Error evaluando fórmula:", e);
-          }
-        });
-    }
-    return nuevasRespuestas;
+    const { respuestas: calculadas, avisos } = calcularDominio(base, preguntasDominio, matrices);
+    avisos.forEach(a => console.warn(`[CALCULO] ${a.etiqueta}: ${a.mensaje}`));
+    return calculadas;
   };
+
 
   /**
    * Recorre todas las preguntas y elimina del estado las respuestas de los elementos
@@ -879,7 +715,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     if (p.regla_visibilidad && p.regla_visibilidad.includes('dependeDeCatalogo')) {
       try {
         const reglaCascada = JSON.parse(sanearTokenQEnJSON(p.regla_visibilidad));
-        const idPadreCascada = resolverIdDesdeToken(String(reglaCascada.dependeDeCatalogo), p);
+        const idPadreCascada = resolverIdDesdeToken(String(reglaCascada.dependeDeCatalogo), aDominio(p), preguntasDominio);
         // La respuesta del padre puede estar acotada a la fila de matriz actual.
         const respuestaPadreTxt = (uuidFila ? respuestas[`${idPadreCascada}_${uuidFila}`] : undefined) ?? respuestas[idPadreCascada];
 
