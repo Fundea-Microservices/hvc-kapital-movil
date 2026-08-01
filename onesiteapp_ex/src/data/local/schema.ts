@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 6, // v6: id_permiso_requerido en cat_menu_appex (menú gateado por permisos)
+  version: 7, // v7: eliminadas las tablas app_ex_* del motor de formularios abandonado
   tables: [
     // Tabla para control de sincronización por tabla (Regla 4.4 y 4.5)
     tableSchema({
@@ -114,35 +114,11 @@ export const schema = appSchema({
       ],
     }),
 
-    tableSchema({
-      name: 'app_ex_encuesta',
-      columns: [
-        { name: 'nombre', type: 'string' },
-        { name: 'estado', type: 'boolean' },
-      ],
-    }),
-    tableSchema({
-      name: 'app_ex_pregunta',
-      columns: [
-        { name: 'id_encuesta', type: 'string', isIndexed: true },
-        { name: 'tipo_input', type: 'string' }, // 'TEXT', 'NUMBER', 'SELECT', 'DATE'
-        { name: 'nombre_input', type: 'string' },
-        { name: 'obligatorio', type: 'boolean' },
-        { name: 'orden', type: 'number' },
-        { name: 'valor_defecto', type: 'string', isOptional: true },
-        { name: 'opciones', type: 'string', isOptional: true }, // JSON string: '["Opcion A", "Opcion B"]'
-        { name: 'catalogo', type: 'string', isOptional: true },
-      ],
-    }),
-    tableSchema({
-      name: 'app_ex_respuesta',
-      columns: [
-        { name: 'pregunta_id', type: 'string', isIndexed: true },
-        { name: 'id_encuesta', type: 'string', isIndexed: true },
-        { name: 'valor', type: 'string', isOptional: true },
-        { name: 'sync_status', type: 'string' }, // 'PENDING' o 'SYNCED'
-      ],
-    }),
+    // Las tablas app_ex_encuesta / app_ex_pregunta / app_ex_respuesta se eliminaron en
+    // la versión 7: pertenecían a un motor de formularios abandonado. Sus modelos ni
+    // siquiera estaban registrados en database.ts, pero dos de ellos apuntaban con
+    // `static table` a tablas VIVAS y declaraban columnas inexistentes — la misma
+    // clase de bomba que ya rompió el sync dos veces.
 
     tableSchema({
       name: 'local_catalogo_opciones',

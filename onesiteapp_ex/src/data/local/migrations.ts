@@ -1,4 +1,4 @@
-import { schemaMigrations, addColumns, createTable } from '@nozbe/watermelondb/Schema/migrations';
+import { schemaMigrations, addColumns, createTable, unsafeExecuteSql } from '@nozbe/watermelondb/Schema/migrations';
 
 /**
  * Registro histórico de migraciones de la base local.
@@ -106,6 +106,20 @@ export const migrations = schemaMigrations({
             { name: 'id_permiso_requerido', type: 'string', isOptional: true },
           ],
         }),
+      ],
+    },
+    {
+      // Se eliminan las tablas del motor de formularios abandonado. WatermelonDB no
+      // ofrece un paso `destroyTable` (está documentado como NO implementado), así que
+      // se usa SQL directo. `if exists` lo hace idempotente y tolera los dispositivos
+      // que nunca llegaron a tener esas tablas.
+      toVersion: 7,
+      steps: [
+        unsafeExecuteSql(
+          'drop table if exists "app_ex_encuesta";' +
+          'drop table if exists "app_ex_pregunta";' +
+          'drop table if exists "app_ex_respuesta";',
+        ),
       ],
     },
   ],
