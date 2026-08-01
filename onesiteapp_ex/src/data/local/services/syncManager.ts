@@ -33,6 +33,21 @@ const TABLAS_AUDITADAS = [
   'local_catalogo_opciones',
 ];
 
+/**
+ * Mapea una fila de menú del servidor al registro local. Se usa para `created` y para
+ * `updated`: el backend clasifica en uno u otro según sea primera carga o incremental,
+ * pero la forma de la fila es idéntica, así que el mapeo debe ser el mismo.
+ */
+const mapearFilaMenu = (row: FilaServidor) => ({
+  id: textoDe(row, 'IdMenu', 'id'),
+  titulo: textoDe(row, 'Titulo', 'titulo', 'Nombre') ?? 'Sin Título',
+  icono: textoDe(row, 'Icono', 'icono') ?? 'folder',
+  orden: numeroDe(row, 1, 'Orden', 'orden'),
+  ruta_pantalla: textoDe(row, 'RutaPantalla', 'ruta_pantalla'),
+  id_padre: textoDe(row, 'IdPadre', 'id_padre'),
+  id_permiso_requerido: textoDe(row, 'IdPermisoRequerido', 'idPermisoRequerido', 'id_permiso_requerido'),
+});
+
 /** Lee de metadata_sync la última fecha confirmada por tabla (ISO) para enviar deltas reales. */
 const leerFechasSyncPorTabla = async (): Promise<Record<string, string | null>> => {
   const mapa: Record<string, string | null> = {};
@@ -285,18 +300,24 @@ export const runFullSync = async () => {
             updated: [], deleted: []
           },
 
-          cat_menu_appex: {
-            created: obtenerCambiosTabla(coreChanges, 'cat_menu_appex', 'Cat_Menu_AppEx').created.map((row) => ({
-              id: textoDe(row, 'IdMenu', 'id'),
-              titulo: textoDe(row, 'Titulo', 'titulo', 'Nombre') ?? 'Sin Título',
-              icono: textoDe(row, 'Icono', 'icono') ?? 'folder',
-              orden: numeroDe(row, 1, 'Orden', 'orden'),
-              ruta_pantalla: textoDe(row, 'RutaPantalla', 'ruta_pantalla'),
-              id_padre: textoDe(row, 'IdPadre', 'id_padre'),
-              id_permiso_requerido: textoDe(row, 'IdPermisoRequerido', 'idPermisoRequerido', 'id_permiso_requerido'),
-            })),
-            updated: [], deleted: []
-          },
+          // El menú debe aplicar los TRES grupos. Antes solo se leía `created` y se
+          // forzaban `updated`/`deleted` vacíos, con lo que ningún cambio del BackOffice
+          // llegaba nunca: el backend manda `created` SOLO en la primera carga y, en
+          // cuanto metadata_sync tiene fecha, todo viaja por `updated`/`deleted`.
+          // (Mientras metadata_sync no avanzaba, esto pasaba desapercibido porque el
+          // backend repetía la primera carga en cada sincronización.)
+          // Nota: este bloque va DESPUÉS del spread `...coreChanges`, así que lo
+          // sobrescribe por completo — de ahí que haya que mapear todo aquí.
+          cat_menu_appex: (() => {
+            const cambios = obtenerCambiosTabla(coreChanges, 'cat_menu_appex', 'Cat_Menu_AppEx');
+            return {
+              created: cambios.created.map(mapearFilaMenu),
+              updated: cambios.updated.map(mapearFilaMenu),
+              // Ya viene normalizado a string[] por obtenerCambiosTabla, que es
+              // exactamente lo que WatermelonDB espera (compara contra raw.id).
+              deleted: cambios.deleted,
+            };
+          })(),
         };
 
         return {
