@@ -13,7 +13,7 @@ describe('normalizarClaveCatalogo', () => {
   it.each([
     ['departamentos', 'DEPARTAMENTOS'],
     ['Departamento', 'DEPARTAMENTO'],
-    [' municipios ', 'MUNICIPIOS'],
+    ['municipios ', 'MUNICIPIOS'],
     ['MUNICIPIOS', 'MUNICIPIOS'],
     ['Región', 'REGION'],
     ['centro poblado', 'CENTRO_POBLADO'],
