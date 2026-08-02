@@ -32,6 +32,7 @@ import { parseNumeroLocal } from '../../../domain/encuesta/numeros';
 import { resolverIdDesdeToken, sanearTokenQEnJSON } from '../../../domain/encuesta/tokens';
 import { evaluarVisibilidad } from '../../../domain/encuesta/visibilidad';
 import { aplicarCalculos as calcularDominio } from '../../../domain/encuesta/calculo';
+import { limpiarDescendientesDeCascada } from '../../../domain/encuesta/cascada';
 
 /** Nodo del árbol de opciones con drill-down jerárquico (SELECT anidado). */
 interface NodoOpcionArbol {
@@ -456,11 +457,30 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   };
 
   const handleRespuestaChange = (idPregunta: string, valor: string) => {
-    const calculadas = aplicarCalculos({ ...respuestas, [idPregunta]: valor });
+    // La clave puede venir acotada a una fila de matriz ("<id>_<uuidFila>").
+    const [idBase, uuidFila] = idPregunta.split('_');
+
+    // Al cambiar el padre de una cascada hay que limpiar a sus descendientes: la regla
+    // `dependeDeCatalogo` solo exige que el padre tenga ALGUNA respuesta, así que el
+    // hijo no se oculta y `purgarOcultos` no lo alcanza. Sin esto, cambiar de
+    // Departamento dejaba guardado un Municipio del departamento anterior — un dato
+    // que parece válido y viajaría al servidor.
+    const { respuestas: sinDescendientes, clavesLimpiadas } = limpiarDescendientesDeCascada(
+      idBase,
+      respuestas[idPregunta],
+      valor,
+      respuestas,
+      preguntasDominio,
+      uuidFila || null,
+    );
+
+    const calculadas = aplicarCalculos({ ...sinDescendientes, [idPregunta]: valor });
     const { respuestas: purgadas, matrices, keysEliminadas } = purgarOcultos(calculadas, instanciasMatriz);
     setRespuestas(purgadas);
     setInstanciasMatriz(matrices);
-    if (keysEliminadas.length > 0) purgarCapturasPersistidas(keysEliminadas);
+
+    const aPurgar = [...clavesLimpiadas, ...keysEliminadas];
+    if (aPurgar.length > 0) purgarCapturasPersistidas(aPurgar);
   };
 
   /**
