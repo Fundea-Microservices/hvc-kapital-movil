@@ -10,6 +10,10 @@
  * persiste NULL, y declararlos opcionales fue la causa de un bug real en el pasado.
  */
 
+// La familia de medio se define en `domain/multimedia`, que no conoce el motor de
+// encuestas: la dependencia va en un solo sentido y no hay ciclo.
+import type { TipoMedio } from '../multimedia/token';
+
 /** Pregunta tal como la necesita el motor, ya aplanada desde el modelo local. */
 export interface PreguntaEncuesta {
   id: string;
@@ -95,3 +99,43 @@ export const esTipoLabel = (tipo: string | null | undefined): boolean =>
 /** Origen de datos servido por una API externa vía proxy del backend. */
 export const esOrigenApi = (pregunta: PreguntaEncuesta): boolean =>
   normalizarTipo(pregunta.origen_datos_tipo) === 'API';
+
+/**
+ * Tipos de pregunta que capturan un archivo, y su reducción a las cuatro familias
+ * de comportamiento que la app implementa.
+ *
+ * POR QUÉ UNA TABLA DE ALIAS Y NO UNA COMPARACIÓN DIRECTA
+ * El BackOffice deja escribir el tipo a mano, así que en producción conviven varias
+ * etiquetas para el mismo comportamiento (`FOTO` y `CAMARA`, `FILE` y `DOCUMENTO`).
+ * Concentrarlas aquí evita que cada `case` del renderizado polimórfico repita la
+ * lista y que un alias nuevo obligue a tocar la pantalla.
+ *
+ * Corrige además un fallo silencioso vigente: `VIDEO` no coincidía con ninguna rama
+ * y caía al `default`, que renderiza un campo de texto libre — el asesor veía un
+ * cuadro de escritura donde debía adjuntar un video.
+ */
+export const ALIAS_TIPO_MEDIO: Readonly<Record<string, TipoMedio>> = {
+  FOTO: 'FOTO',
+  CAMARA: 'FOTO',
+  FOTOGRAFIA: 'FOTO',
+  MULTIMEDIA: 'MULTIMEDIA',
+  IMAGEN: 'MULTIMEDIA',
+  VIDEO: 'MULTIMEDIA',
+  GALERIA: 'MULTIMEDIA',
+  FILE: 'DOCUMENTO',
+  DOCUMENTO: 'DOCUMENTO',
+  ARCHIVO: 'DOCUMENTO',
+  ADJUNTO: 'DOCUMENTO',
+  FIRMA: 'FIRMA',
+};
+
+/**
+ * Devuelve la familia de medio de una pregunta, o `null` si no captura archivos.
+ * El llamador puede usarlo como discriminador sin conocer la tabla de alias.
+ */
+export const tipoMedioDe = (tipo: string | null | undefined): TipoMedio | null =>
+  ALIAS_TIPO_MEDIO[normalizarTipo(tipo)] ?? null;
+
+/** Verdadero para cualquier pregunta que adjunte un archivo. */
+export const esTipoMedio = (tipo: string | null | undefined): boolean =>
+  tipoMedioDe(tipo) !== null;
