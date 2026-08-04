@@ -24,6 +24,28 @@ export const apiClientCatalogos = axios.create({
   },
 });
 
+/**
+ * Instancia DEDICADA a la subida de archivos.
+ *
+ * POR QUÉ NO SE REUSA `apiClient`
+ * Su interceptor de respuesta reejecuta la petición original tras un 401
+ * (`return currentInstance(originalRequest)`). Con un cuerpo JSON eso es correcto,
+ * pero un `FormData` que envuelve un archivo es un **stream de un solo uso**: al
+ * reintentarlo ya está consumido y el servidor recibiría 0 bytes — con un 200 de
+ * respuesta y un archivo vacío en disco. Un fallo silencioso que destruye evidencia.
+ *
+ * Comparte el interceptor de PETICIÓN (necesita los mismos tokens) pero no el de
+ * respuesta: la cola de subida clasifica el error y decide si reintenta, esta vez
+ * construyendo un `FormData` nuevo.
+ *
+ * El timeout es mucho mayor: 30 s no alcanzan para 5 MB por red móvil rural, que es
+ * exactamente el escenario de esta aplicación.
+ */
+export const apiClientUpload = axios.create({
+  baseURL,
+  timeout: 120000,
+});
+
 // ============================================================================
 // 1. INTERCEPTOR DE PETICIONES (Unificado: Logs + Inyección de Tokens)
 // ============================================================================
@@ -53,6 +75,8 @@ const requestInterceptorInterceptor = async (config: InternalAxiosRequestConfig)
 
 apiClient.interceptors.request.use(requestInterceptorInterceptor, (error) => Promise.reject(error));
 apiClientCatalogos.interceptors.request.use(requestInterceptorInterceptor, (error) => Promise.reject(error));
+// Solo el de petición: ver el comentario de `apiClientUpload`.
+apiClientUpload.interceptors.request.use(requestInterceptorInterceptor, (error) => Promise.reject(error));
 
 // Variables para evitar múltiples llamadas de refresh simultáneas
 let isRefreshing = false;

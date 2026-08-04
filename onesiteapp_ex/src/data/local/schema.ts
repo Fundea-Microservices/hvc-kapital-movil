@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 7, // v7: eliminadas las tablas app_ex_* del motor de formularios abandonado
+  version: 8, // v8: local_multimedia (cola de archivos adjuntos pendientes de subir)
   tables: [
     // Tabla para control de sincronización por tabla (Regla 4.4 y 4.5)
     tableSchema({
@@ -141,6 +141,57 @@ export const schema = appSchema({
         { name: 'id_encuesta', type: 'string' },
         { name: 'estado_gestion', type: 'number' },
         { name: 'motivo_rechazo', type: 'string', isOptional: true },
+      ],
+    }),
+
+    /**
+     * Archivos adjuntos pendientes de subir (v8).
+     *
+     * POR QUÉ NO VIVE EN `local_captura`
+     * `persistirCapturas` destruye y recrea TODAS las filas de la instancia en cada
+     * auto-save, que se dispara ~1,5 s después de cualquier tecla. Guardar aquí
+     * `estado_subida`, `intentos` o `ruta_relativa` significaría perderlos cada vez
+     * que el asesor escribe en cualquier otro campo del formulario. Además es la
+     * trampa nº 2 del proyecto: dos escritores sobre la misma tabla deben poseer
+     * conjuntos de filas disjuntos, y aquí no lo serían.
+     *
+     * El puente entre ambas tablas es `(uuid_instancia, id_pregunta)`, la única
+     * clave estable que el dispositivo puede construir sin conocer el `IdCaptura`.
+     *
+     * TODAS las columnas que declare el modelo deben existir aquí — trampa nº 1: un
+     * `@field` sin columna lanza `TypeError` y aborta la sincronización COMPLETA, no
+     * solo esa fila. `created_at`/`updated_at` no son implícitas y por eso no se
+     * declaran en el modelo.
+     */
+    tableSchema({
+      name: 'local_multimedia',
+      columns: [
+        { name: 'id_encuesta', type: 'string', isIndexed: true },
+        { name: 'id_pregunta', type: 'string', isIndexed: true },
+        // Clave de la fila de matriz; cadena vacía para preguntas normales.
+        { name: 'uuid_instancia', type: 'string' },
+        // Instancia de captura a la que pertenece: permite purgar de golpe.
+        { name: 'uuid_base', type: 'string', isIndexed: true },
+        { name: 'tipo_medio', type: 'string' },
+        // RELATIVA al directorio de documentos, NUNCA absoluta: en iOS el contenedor
+        // lleva un UUID que cambia al actualizar la app y las rutas absolutas
+        // guardadas dejarían de existir, perdiendo toda la cola pendiente.
+        { name: 'ruta_relativa', type: 'string' },
+        { name: 'nombre_original', type: 'string', isOptional: true },
+        { name: 'extension', type: 'string' },
+        { name: 'mime_type', type: 'string', isOptional: true },
+        { name: 'tamanio_bytes', type: 'number' },
+        { name: 'secuencia', type: 'number' },
+        // 0 pendiente | 1 error reintentable | 2 subido | 3 rechazado definitivo
+        { name: 'estado_subida', type: 'number', isIndexed: true },
+        { name: 'intentos', type: 'number' },
+        { name: 'ultimo_error', type: 'string', isOptional: true },
+        // STRING y no NUMBER: es un BIGINT del servidor y convertirlo a número
+        // podría superar Number.MAX_SAFE_INTEGER y redondearse en silencio, dejando
+        // el archivo colgado de otra captura.
+        { name: 'id_captura_servidor', type: 'string', isOptional: true },
+        { name: 'fecha_captura', type: 'number' },
+        { name: 'fecha_subida', type: 'number', isOptional: true },
       ],
     }),
 

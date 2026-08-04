@@ -7,6 +7,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { obtenerParametroNumerico } from '../../../data/local/services/parametros.service';
 import { parsearReglaValidacion, validarValor, aplicarMascara, type ReglaParseada } from '../../../domain/validacion/reglaValidacion';
 import { esTipoNumerico, opcionesPorTipo, sanitizarEntradaNumerica } from '../../../domain/validacion/entradaNumerica';
+import { tipoMedioDe } from '../../../domain/encuesta/tipos';
+import { CampoMultimedia } from './CampoMultimedia';
+import type { ContextoCaptura } from '../../../data/local/services/multimedia.service';
 
 type NodoOpcion = { valor: string; hijos: NodoOpcion[] };
 
@@ -24,10 +27,17 @@ interface SurveyFieldProps {
   onChangeText: (text: string) => void;
   reglaValidacion?: string | null;
   onBlur: () => void;
+  /**
+   * Coordenada de la respuesta dentro de la captura en curso. Solo la necesitan los
+   * campos de archivo: el binario se guarda en una tabla propia y hace falta saber a
+   * qué encuesta, pregunta y fila de matriz pertenece. Es opcional para no obligar a
+   * las pantallas que no capturan multimedia a construirlo.
+   */
+  contextoCaptura?: ContextoCaptura;
 }
 
 export const SurveyField = ({
-  etiqueta, tipoDato, esObligatorio, esEditable, valor, opciones, arbolOpciones, onChangeText, reglaValidacion, mensajeInfo, onBlur
+  etiqueta, tipoDato, esObligatorio, esEditable, valor, opciones, arbolOpciones, onChangeText, reglaValidacion, mensajeInfo, onBlur, contextoCaptura
 }: SurveyFieldProps) => {
 
   const [isGpsLoading, setIsGpsLoading] = useState(false);
@@ -47,6 +57,9 @@ export const SurveyField = ({
   };
   const tipoCrudo = tipoDato ? tipoDato.trim().toUpperCase() : 'TEXTO';
   const tipoFormateado = ALIAS_TIPOS[tipoCrudo] || tipoCrudo;
+  // Familia de archivo (FOTO | MULTIMEDIA | DOCUMENTO | FIRMA), o null si la pregunta
+  // no captura archivos. La tabla de alias vive en el dominio, no aquí.
+  const tipoMedio = tipoMedioDe(tipoCrudo);
 
   // DE REGLAS DEL BACKOFFICE — parseo delegado al módulo compartido con
   // DynamicSurveyScreen (mismo criterio para el input en vivo y al finalizar).
@@ -454,17 +467,61 @@ export const SurveyField = ({
           <Text className="text-gray-600 text-sm leading-relaxed">{etiqueta}</Text>
         );
 
+      // ---------------------------------------------------------------- Multimedia
+      // Los alias del BackOffice (CAMARA, GALERIA, VIDEO, FILE, ARCHIVO…) se resuelven
+      // en `ALIAS_TIPO_MEDIO`, no aquí: añadir uno nuevo no obliga a tocar la pantalla.
+      // Antes, `VIDEO` no coincidía con ninguna rama y caía al `default`, que renderiza
+      // un campo de texto libre — el asesor veía un cuadro de escritura donde debía
+      // adjuntar un archivo.
+
       case 'FOTO':
-      case 'DOCUMENTO':
+      case 'CAMARA':
+      case 'FOTOGRAFIA':
+      case 'MULTIMEDIA':
       case 'IMAGEN':
+      case 'VIDEO':
+      case 'GALERIA':
+      case 'FILE':
+      case 'DOCUMENTO':
+      case 'ARCHIVO':
+      case 'ADJUNTO': {
+        // Sin contexto no se puede saber a qué respuesta pertenece el archivo, y
+        // guardarlo produciría un adjunto huérfano. Ocurre si una pantalla usa
+        // SurveyField sin pasar `contextoCaptura`: se avisa en vez de fallar.
+        if (!contextoCaptura || !tipoMedio) {
+          return (
+            <View className="p-4 border-2 border-dashed border-amber-200 bg-amber-50/50 rounded-xl flex-row items-center">
+              <Feather name="alert-triangle" size={18} color="#F59E0B" />
+              <Text className="text-amber-600 text-xs font-medium ml-3 flex-1">
+                Captura de archivos no disponible en este contexto.
+              </Text>
+            </View>
+          );
+        }
+
+        return (
+          <CampoMultimedia
+            tipo={tipoMedio}
+            valor={valor}
+            esEditable={esEditable}
+            contexto={contextoCaptura}
+            onChangeText={onChangeText}
+            onBlur={onBlur}
+          />
+        );
+      }
+
       case 'FIRMA':
-        // Tipos multimedia documentados pero aún sin soporte (Storage-Service pendiente).
-        // Un TextInput aquí confundiría al encuestador; se muestra un aviso claro.
+        // DEUDA DELIBERADA: el entorno está completo de punta a punta —tipo, alias,
+        // columnas, token, cola de subida, endpoint, storage e índice ya soportan
+        // FIRMA— y lo único que falta es un componente de lienzo que produzca un PNG.
+        // El día que se retome, basta con llamar a `registrarArchivoLocal(contexto,
+        // 'FIRMA', { uri })` desde ese lienzo: el resto del recorrido ya funciona.
         return (
           <View className="p-4 border-2 border-dashed border-amber-200 bg-amber-50/50 rounded-xl flex-row items-center">
-            <Feather name="camera-off" size={18} color="#F59E0B" />
+            <Feather name="edit-3" size={18} color="#F59E0B" />
             <Text className="text-amber-600 text-xs font-medium ml-3 flex-1">
-              Captura multimedia no disponible en esta versión de la aplicación.
+              La captura de firma no está disponible en esta versión.
             </Text>
           </View>
         );

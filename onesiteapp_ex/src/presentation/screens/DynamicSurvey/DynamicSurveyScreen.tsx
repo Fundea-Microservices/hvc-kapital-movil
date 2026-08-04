@@ -975,6 +975,15 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                                       reglaValidacion={hija.regla_validacion}
                                       onChangeText={(txt) => handleRespuestaChange(`${hija.id}_${uuidFila}`, txt)}
                                       onBlur={() => { }}
+                                      // Los archivos de una fila de matriz se identifican
+                                      // por (instancia, pregunta, uuidFila): eliminar la
+                                      // fila debe poder llevarse su adjunto.
+                                      contextoCaptura={{
+                                        idEncuesta: idEncuestaSeguro,
+                                        idPregunta: String(hija.id),
+                                        uuidBase: instanciaEncuestaUuid,
+                                        uuidFila,
+                                      }}
                                     />
                                   </View>
                                 );
@@ -999,6 +1008,12 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                           onChangeText={(txt) => handleRespuestaChange(p.id, txt)}
                           onBlur={() => { }}
                           mensajeInfo={esTipoCalculo(p.tipo_dato) ? "Calculado automáticamente" : undefined}
+                          contextoCaptura={{
+                            idEncuesta: idEncuestaSeguro,
+                            idPregunta: String(p.id),
+                            uuidBase: instanciaEncuestaUuid,
+                            uuidFila: null,
+                          }}
                         />
                       </View>
                     );

@@ -122,5 +122,35 @@ export const migrations = schemaMigrations({
         ),
       ],
     },
+    {
+      // Cola local de archivos adjuntos. Va en el MISMO commit que la subida de
+      // `version` a 8 en `schema.ts`: separarlos deja la app sin poder abrir la base.
+      toVersion: 8,
+      steps: [
+        createTable({
+          name: 'local_multimedia',
+          columns: [
+            { name: 'id_encuesta', type: 'string', isIndexed: true },
+            { name: 'id_pregunta', type: 'string', isIndexed: true },
+            { name: 'uuid_instancia', type: 'string' },
+            { name: 'uuid_base', type: 'string', isIndexed: true },
+            { name: 'tipo_medio', type: 'string' },
+            { name: 'ruta_relativa', type: 'string' },
+            { name: 'nombre_original', type: 'string', isOptional: true },
+            { name: 'extension', type: 'string' },
+            { name: 'mime_type', type: 'string', isOptional: true },
+            { name: 'tamanio_bytes', type: 'number' },
+            { name: 'secuencia', type: 'number' },
+            { name: 'estado_subida', type: 'number', isIndexed: true },
+            { name: 'intentos', type: 'number' },
+            { name: 'ultimo_error', type: 'string', isOptional: true },
+            { name: 'id_captura_servidor', type: 'string', isOptional: true },
+            { name: 'fecha_captura', type: 'number' },
+            { name: 'fecha_subida', type: 'number', isOptional: true },
+          ],
+          unsafeSql: idempotente,
+        }),
+      ],
+    },
   ],
 });

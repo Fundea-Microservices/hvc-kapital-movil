@@ -18,6 +18,8 @@ import {
 } from '../../remote/types/sync.types';
 import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
+import { estamparIdCaptura, contarPendientesDeSubida } from './multimedia.service';
+import { subirMultimediaPendiente } from '../../remote/services/multimediaUploader';
 
 // ============================================================================
 // 1. FUNCIÓN PRINCIPAL DE SINCRONIZACIÓN DE ENCUESTAS (Deltas)
@@ -196,7 +198,38 @@ export const runFullSync = async () => {
         };
 
         try {
-          await apiClient.post('/surveys/submit', payload, config);
+          const respuestaSubmit = await apiClient.post('/surveys/submit', payload, config);
+
+          /**
+           * El `IdCaptura` que devuelve el servidor es lo único que permite subir
+           * después los archivos adjuntos: es un IDENTITY que genera SQL Server en
+           * este INSERT, así que el dispositivo no puede conocerlo cuando toma la
+           * foto —potencialmente días antes, sin señal—.
+           *
+           * Se lee como STRING. Es un BIGINT: convertirlo a número podría superar
+           * Number.MAX_SAFE_INTEGER y redondearse SIN ERROR, subiendo el archivo a
+           * la captura equivocada.
+           *
+           * Si el servidor no lo devuelve (backend anterior al Sprint 10) se registra
+           * un error explícito y las filas quedan SIN id: invisibles para la cola.
+           * NUNCA se inventa un valor — un id de reserva ocultaría el problema en vez
+           * de mostrarlo, y los archivos acabarían colgados de una captura ajena.
+           */
+          const datosSubmit = (respuestaSubmit?.data ?? {}) as FilaServidor;
+          const idCapturaServidor = textoDe(datosSubmit, 'idCaptura', 'IdCaptura');
+
+          if (idCapturaServidor) {
+            await estamparIdCaptura(uuidBase, idCapturaServidor);
+          } else {
+            const pendientes = await contarPendientesDeSubida();
+            if (pendientes > 0) {
+              console.error(
+                `❌ [Multimedia] El /submit de ${uuidBase} no devolvió idCaptura y hay ` +
+                `${pendientes} archivo(s) pendientes. No podrán subirse hasta que el ` +
+                'backend se actualice al Sprint 10.',
+              );
+            }
+          }
 
           // AHORA SÍ: Como estamos fuera del synchronize, WatermelonDB permite escribir sin problemas
           await database.write(async () => {
@@ -221,6 +254,24 @@ export const runFullSync = async () => {
           // Omitimos lanzar el throw para que intente subir las demás encuestas agrupadas si hay varias
         }
       }
+    }
+
+    // =======================================================================
+    // FASE 1.B: SUBIDA DE ARCHIVOS ADJUNTOS
+    // =======================================================================
+    // Va aquí y no en otro sitio por tres razones:
+    //  - DESPUÉS del submit, que es quien entrega el IdCaptura recién estampado.
+    //  - ANTES del pull, para que un pull largo no retrase la evidencia de campo.
+    //  - DENTRO del candado `isSyncRunning`, así dos ciclos solapados no suben el
+    //    mismo archivo dos veces.
+    // Recoge también archivos de envíos anteriores cuyo binario falló: un ciclo malo
+    // no condena la evidencia. Nunca lanza — que falle una foto no debe impedir la
+    // descarga de estructuras, que es lo que mantiene operativa la aplicación.
+    try {
+      await subirMultimediaPendiente();
+    } catch (error) {
+      const detalle = error instanceof Error ? error.message : String(error);
+      console.error(`❌ [Multimedia] La fase de subida falló por completo: ${detalle}`);
     }
 
     // =======================================================================

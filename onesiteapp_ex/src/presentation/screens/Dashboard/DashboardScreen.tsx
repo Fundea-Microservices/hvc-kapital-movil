@@ -18,6 +18,7 @@ import LocalClientePendiente from '../../../data/local/models/LocalClientePendie
 import { leerRaw, type RawUsuarioPerfil } from '../../../data/local/types/raw.types';
 import type { NavegacionApp } from '../../navigation/types';
 import { DynamicCarousel } from '../DynamicCarousel/DynamicCarouselScreen';
+import { contarPendientesDeSubida } from '../../../data/local/services/multimedia.service';
 
 interface Props {
   menuItems: CatMenuAppex[];
@@ -184,6 +185,36 @@ const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
     auditarCatalogosOffline();
   }, []);
 
+  /**
+   * Archivos adjuntos que aún no han llegado al servidor.
+   *
+   * POR QUÉ ESTE INDICADOR ES NECESARIO
+   * La encuesta sincronizada NO implica que sus binarios hayan subido: son ciclos
+   * independientes, porque una foto de 4 MB puede tardar varios intentos donde la
+   * encuesta —unos pocos KB de texto— ya pasó al primero. Sin un indicador visible, el
+   * asesor ve "0 pendientes", da su trabajo por terminado y puede liberar espacio o
+   * devolver el equipo con evidencia todavía en cola.
+   *
+   * Se recuenta al enfocar la pantalla en vez de observarse con `withObservables`
+   * porque la cola la escribe el sync, no la interfaz: no hay ningún flujo en el que
+   * el número cambie mientras el usuario mira esta pantalla sin volver a entrar.
+   */
+  const [archivosPendientes, setArchivosPendientes] = useState(0);
+
+  useEffect(() => {
+    const recuento = async () => {
+      try {
+        setArchivosPendientes(await contarPendientesDeSubida());
+      } catch (error) {
+        const detalle = error instanceof Error ? error.message : String(error);
+        console.error(`❌ [Multimedia] No se pudo contar los pendientes: ${detalle}`);
+      }
+    };
+    void recuento();
+    const quitarListener = navigation.addListener('focus', () => { void recuento(); });
+    return quitarListener;
+  }, [navigation]);
+
   return (
     <SafeAreaView className="flex-1 bg-[#F9FAFB]" edges={['top', 'left', 'right']}>
 
@@ -329,6 +360,27 @@ const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
             />
           </View>
         </ScrollView>
+      )}
+
+      {/* AVISO DE ARCHIVOS EN COLA — se muestra aunque no queden capturas pendientes,
+          que es precisamente el caso peligroso: la encuesta ya se envió y el asesor
+          creería que no queda nada por hacer. */}
+      {capturasPendientes === 0 && archivosPendientes > 0 && (
+        <View
+          style={{ bottom: insets.bottom + 16 }}
+          className="absolute left-0 right-0 px-6 z-20"
+        >
+          <TouchableOpacity
+            onPress={handleManualSync}
+            activeOpacity={0.85}
+            className="bg-white p-4 rounded-2xl flex-row justify-center items-center shadow-lg border border-amber-300"
+          >
+            <Feather name="image" size={20} color="#D97706" />
+            <Text className="text-[#B45309] font-bold ml-3 text-base">
+              {archivosPendientes} archivo(s) por enviar
+            </Text>
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* BOTÓN FLOTANTE MÓVIL PARA ENVÍOS EN SEGUNDO PLANO */}
