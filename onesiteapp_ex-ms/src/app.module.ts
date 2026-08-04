@@ -11,6 +11,7 @@ import { DeviceService } from './modules/device-management/application/device.se
 import { AuthModule } from './modules/auth/auth.module';
 import { SyncModule } from './modules/sync/sync.module';
 import { SurveysModule } from './modules/surveys/surveys.module';
+import { MultimediaModule } from './modules/multimedia/multimedia.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { SurveysModule } from './modules/surveys/surveys.module';
     AuthModule,
     SyncModule,
     SurveysModule,
+    MultimediaModule,
     //DeviceModule,
   ],
   controllers: [AppController,DeviceController],
