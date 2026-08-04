@@ -180,7 +180,7 @@ export class SurveysService {
       const resultHeader = await queryRunner.manager.query(`
         INSERT INTO appEx_Encabezado_Captura 
         (IdEncuesta, IdUsuario, FechaInicio, FechaFin, Latitud, Longitud, DispositivoID)
-        OUTPUT inserted.*
+        OUTPUT inserted.IdCaptura
         VALUES (@0, @1, @2, @3, @4, @5, @6)
       `, [
         idEncuesta,
@@ -203,19 +203,26 @@ export class SurveysService {
       } 
       // EL CÓDIGO CONTINÚA NORMALMENTE SI PASÓ LA VALIDACIÓN
 
-      // MAGIA DINÁMICA: Tomamos la primera fila devuelta
-      const filaCreada = resultHeader[0];
+      // El id se lee POR NOMBRE, no por posición. La versión anterior tomaba
+      // `Object.keys(filaCreada)[0]` asumiendo que la llave primaria era la primera
+      // columna de la tabla: bastaba con que alguien reordenara `appEx_Encabezado_Captura`
+      // en el BackOffice para que el `IdCaptura` pasara a ser un `IdEncuesta` o una
+      // fecha, silenciosamente. Ahora el `OUTPUT` pide exactamente la columna que se
+      // necesita, así que la consulta falla de forma visible si esa columna cambia.
+      const filaCreada = resultHeader[0] as { IdCaptura: number | string };
+      const nuevoIdCaptura = filaCreada?.IdCaptura;
 
-      // Extraemos todas las llaves (nombres de las columnas) de esa fila
-      const nombresColumnas = Object.keys(filaCreada);
+      if (nuevoIdCaptura === undefined || nuevoIdCaptura === null) {
+        throw new Error('La inserción no devolvió IdCaptura.');
+      }
 
-      // Asumimos que la Llave Primaria (Id) es siempre la primera columna de la tabla
-      const nombreDeLaLlavePrimaria = nombresColumnas[0];
+      // `IdCaptura` es BIGINT y se propaga como STRING a partir de aquí. Convertirlo a
+      // number podría superar Number.MAX_SAFE_INTEGER y redondearse sin ningún error:
+      // los archivos de multimedia quedarían colgados de OTRA captura. El driver ya lo
+      // devuelve como string cuando excede ese rango, así que se normaliza en un punto.
+      const idCapturaTexto = String(nuevoIdCaptura);
 
-      // Extraemos el valor real del ID
-      const nuevoIdCaptura = filaCreada[nombreDeLaLlavePrimaria];
-
-      console.log(`✅ [SQL] Encabezado creado con ID: ${nuevoIdCaptura} (Columna: ${nombreDeLaLlavePrimaria})`);
+      console.log(`✅ [SQL] Encabezado creado con IdCaptura: ${idCapturaTexto}`);
 
       // 4. Insertamos las respuestas usando el nuevoIdCaptura extraído dinámicamente
       for (const resp of respuestas) {
@@ -234,7 +241,17 @@ export class SurveysService {
       }
 
       await queryRunner.commitTransaction();
-      return { success: true, message: 'Encuesta sincronizada correctamente' };
+
+      // `idCaptura` es lo que habilita el flujo en dos fases de multimedia: el
+      // dispositivo no puede conocerlo al capturar la foto (es un IDENTITY que genera
+      // el motor aquí mismo), así que lo recibe en esta respuesta y lo estampa en su
+      // cola local para poder subir después los binarios. Es un campo AÑADIDO: las
+      // versiones de la app que no lo lean siguen funcionando igual.
+      return {
+        success: true,
+        message: 'Encuesta sincronizada correctamente',
+        idCaptura: idCapturaTexto,
+      };
 
     } catch (error: any) {
       console.error('❌ ERROR CRÍTICO EN SQL (submitSurvey):', error.message || error);
