@@ -266,7 +266,7 @@ const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
 
           {/* LISTA DINÁMICA DE ENCUESTAS ASIGNADAS AL ASESOR */}
           <View className="px-6 mt-4">
-            <Text className="text-[#1E3A8A] text-xl font-black tracking-tight mb-4">Formularios asiganados</Text>
+            <Text className="text-[#1E3A8A] text-xl font-black tracking-tight mb-4">Encuestas asignadas</Text>
             {encuestas.length === 0 ? (
               <View className="bg-gray-50 p-6 rounded-3xl border border-dashed border-gray-200 items-center">
                 <Feather name="folder-minus" size={32} color="#9CA3AF" />

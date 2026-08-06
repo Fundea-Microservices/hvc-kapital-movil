@@ -33,6 +33,9 @@ import { resolverIdDesdeToken, sanearTokenQEnJSON } from '../../../domain/encues
 import { evaluarVisibilidad } from '../../../domain/encuesta/visibilidad';
 import { aplicarCalculos as calcularDominio } from '../../../domain/encuesta/calculo';
 import { limpiarDescendientesDeCascada } from '../../../domain/encuesta/cascada';
+import * as ImagePicker from 'expo-image-picker';
+import { consumirCapturaPendiente } from '../../../data/local/services/capturaPendiente';
+import { registrarArchivoLocal } from '../../../data/local/services/multimedia.service';
 
 /** Nodo del árbol de opciones con drill-down jerárquico (SELECT anidado). */
 interface NodoOpcionArbol {
@@ -110,6 +113,74 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
       setSeccionesAbiertas({ [secciones[0].id]: true });
     }
   }, [secciones]);
+
+  /**
+   * Recupera la foto cuando Android destruyó el proceso mientras la cámara estaba
+   * abierta — escenario real en gama baja, donde el sistema mata la aplicación de
+   * fondo porque la cámara consume mucha memoria.
+   *
+   * Al volver, la foto SÍ se tomó, pero la promesa de `launchCameraAsync` murió con el
+   * proceso: sin esto se pierde en silencio y el asesor jura haberla tomado.
+   *
+   * POR QUÉ VIVE EN LA PANTALLA Y NO EN EL CAMPO
+   * `getPendingResultAsync()` entrega el resultado huérfano pero NO dice qué pregunta
+   * lo pidió. Resolverlo en `CampoMultimedia` asignaría la foto al primer campo que se
+   * monte, que casi nunca es el correcto. La coordenada se anotó antes de abrir la
+   * cámara (`anotarCapturaPendiente`) y aquí se consume una sola vez, en el arranque.
+   *
+   * Se ejecuta sin dependencias a propósito: solo tiene sentido una vez por montaje.
+   */
+  useEffect(() => {
+    const recuperarFotoHuerfana = async () => {
+      try {
+        const pendiente = await ImagePicker.getPendingResultAsync();
+        if (!pendiente) return;
+
+        // La nota se consume SIEMPRE, haya foto o no: si sobreviviera, reasignaría
+        // una foto vieja a la siguiente pregunta que usara la cámara — un error mucho
+        // peor y prácticamente indetectable.
+        const contexto = await consumirCapturaPendiente();
+
+        const resultados = Array.isArray(pendiente) ? pendiente : [pendiente];
+        const conFoto = resultados.find(
+          (r): r is ImagePicker.ImagePickerSuccessResult =>
+            'assets' in r && Array.isArray(r.assets) && r.assets.length > 0,
+        );
+        if (!conFoto || !contexto) return;
+
+        // Solo se acepta si corresponde a ESTA instancia de captura: el usuario pudo
+        // haber abierto otra encuesta entretanto.
+        if (contexto.uuidBase !== instanciaEncuestaUuid) {
+          console.warn('⚠️ [Multimedia] Foto huérfana de otra instancia; se descarta.');
+          return;
+        }
+
+        const activo = conFoto.assets[0];
+        const registrado = await registrarArchivoLocal(contexto, 'FOTO', {
+          uri: activo.uri,
+          nombre: activo.fileName,
+          mimeType: activo.mimeType,
+          tamanio: activo.fileSize ?? null,
+        });
+
+        // Misma convencion de clave que usa el resto de la pantalla.
+        const clave = contexto.uuidFila
+          ? `${contexto.idPregunta}_${contexto.uuidFila}`
+          : contexto.idPregunta;
+        handleRespuestaChange(clave, registrado.token);
+
+        Alert.alert(
+          'Fotografía recuperada',
+          'La aplicación se cerró mientras tomaba la fotografía, pero se recuperó y ya está adjunta.',
+        );
+      } catch (error) {
+        const detalle = error instanceof Error ? error.message : String(error);
+        console.warn(`⚠️ [Multimedia] No se pudo recuperar la foto pendiente: ${detalle}`);
+      }
+    };
+
+    void recuperarFotoHuerfana();
+  }, []);
 
   const scrollViewRef = useRef<ScrollView>(null);
   const sectionRefs = useRef<Record<string, View | null>>({});

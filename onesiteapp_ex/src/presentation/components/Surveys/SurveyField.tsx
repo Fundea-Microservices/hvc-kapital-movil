@@ -484,7 +484,8 @@ export const SurveyField = ({
       case 'FILE':
       case 'DOCUMENTO':
       case 'ARCHIVO':
-      case 'ADJUNTO': {
+      case 'ADJUNTO':
+      case 'FIRMA': {
         // Sin contexto no se puede saber a qué respuesta pertenece el archivo, y
         // guardarlo produciría un adjunto huérfano. Ocurre si una pantalla usa
         // SurveyField sin pasar `contextoCaptura`: se avisa en vez de fallar.
@@ -511,20 +512,6 @@ export const SurveyField = ({
         );
       }
 
-      case 'FIRMA':
-        // DEUDA DELIBERADA: el entorno está completo de punta a punta —tipo, alias,
-        // columnas, token, cola de subida, endpoint, storage e índice ya soportan
-        // FIRMA— y lo único que falta es un componente de lienzo que produzca un PNG.
-        // El día que se retome, basta con llamar a `registrarArchivoLocal(contexto,
-        // 'FIRMA', { uri })` desde ese lienzo: el resto del recorrido ya funciona.
-        return (
-          <View className="p-4 border-2 border-dashed border-amber-200 bg-amber-50/50 rounded-xl flex-row items-center">
-            <Feather name="edit-3" size={18} color="#F59E0B" />
-            <Text className="text-amber-600 text-xs font-medium ml-3 flex-1">
-              La captura de firma no está disponible en esta versión.
-            </Text>
-          </View>
-        );
 
       case 'COORDENADAS':
       case 'GEOLOCALIZACION':

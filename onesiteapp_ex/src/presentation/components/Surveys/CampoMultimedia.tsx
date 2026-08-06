@@ -14,6 +14,11 @@ import {
   type ContextoCaptura,
 } from '../../../data/local/services/multimedia.service';
 import { obtenerParametroNumerico } from '../../../data/local/services/parametros.service';
+import { LienzoFirma } from './LienzoFirma';
+import {
+  anotarCapturaPendiente,
+  limpiarCapturaPendiente,
+} from '../../../data/local/services/capturaPendiente';
 import {
   formatearTamanio,
   parsearTokenMedia,
@@ -78,6 +83,7 @@ export const CampoMultimedia = ({
   const [cargando, setCargando] = useState(false);
   const [uriLocal, setUriLocal] = useState<string | null>(null);
   const [estadoSubida, setEstadoSubida] = useState<number>(ESTADO_SUBIDA.PENDIENTE);
+  const [lienzoVisible, setLienzoVisible] = useState(false);
 
   const presentacion = PRESENTACION[tipo];
   const token = parsearTokenMedia(valor);
@@ -119,18 +125,12 @@ export const CampoMultimedia = ({
   }, [valor, contexto.uuidBase, contexto.idPregunta, contexto.uuidFila]);
 
   /*
-   * DEUDA CONOCIDA — muerte del proceso durante la cámara (Android gama baja).
+   * La recuperación tras la muerte del proceso durante la cámara NO se resuelve aquí.
    *
-   * La cámara consume mucha memoria y el sistema puede matar la aplicación de fondo.
-   * Al volver, `launchCameraAsync` ya terminó pero su promesa murió con el proceso: la
-   * foto se pierde en silencio y el asesor jura haberla tomado.
-   *
-   * `ImagePicker.getPendingResultAsync()` devuelve ese resultado huérfano, PERO no
-   * indica qué pregunta lo pidió. Recuperarlo aquí, en un componente por campo,
-   * asignaría la foto al primer campo que se monte, que casi nunca es el correcto.
-   * La solución correcta es guardar la coordenada pedida antes de abrir la cámara y
-   * recuperarla en el arranque de la pantalla, no en este componente. Se deja sin
-   * implementar y anotado, en vez de con una versión que parezca cubrirlo.
+   * `getPendingResultAsync()` devuelve el resultado huérfano pero no dice qué pregunta
+   * lo pidió, así que recuperarlo en un componente por campo asignaría la foto al
+   * primer campo que se monte. La coordenada se deja anotada antes de abrir la cámara
+   * (ver `capturaPendiente.ts`) y quien la recupera es la pantalla, en su arranque.
    */
 
   /** Peso máximo vigente, configurable desde el BackOffice sin publicar versión. */
@@ -186,12 +186,24 @@ export const CampoMultimedia = ({
     // donde la subida ocurre por red móvil rural.
     const calidad = await obtenerParametroNumerico('MULTIMEDIA_CALIDAD_FOTO', 0.7);
 
-    const resultado = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      quality: calidad > 0 && calidad <= 1 ? calidad : 0.7,
-      allowsEditing: false,
-      exif: false,
-    });
+    // Se anota QUE pregunta abre la camara ANTES de lanzarla. Si Android mata el
+    // proceso mientras el usuario encuadra, esta nota es lo unico que permitira saber
+    // a que respuesta pertenece la foto al recuperarla en el arranque.
+    await anotarCapturaPendiente(contexto);
+
+    let resultado: ImagePicker.ImagePickerResult;
+    try {
+      resultado = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: calidad > 0 && calidad <= 1 ? calidad : 0.7,
+        allowsEditing: false,
+        exif: false,
+      });
+    } finally {
+      // La camara devolvio (con foto o cancelada), asi que la nota ya no sirve: si
+      // sobreviviera, una foto vieja podria reasignarse a la siguiente pregunta.
+      await limpiarCapturaPendiente();
+    }
 
     if (resultado.canceled) return;
     const activo = resultado.assets?.[0];
@@ -265,6 +277,14 @@ export const CampoMultimedia = ({
   const capturar = async (): Promise<void> => {
     if (!esEditable || cargando) return;
 
+    // FIRMA no abre un selector del sistema: el lienzo es un modal propio y su
+    // resultado llega por `procesarSeleccion` desde `onFirmar`. Se sale antes de
+    // activar el indicador de carga, que aquí lo gobierna el propio lienzo.
+    if (tipo === 'FIRMA') {
+      setLienzoVisible(true);
+      return;
+    }
+
     setCargando(true);
     try {
       if (tipo === 'FOTO') await abrirCamara();
@@ -314,6 +334,7 @@ export const CampoMultimedia = ({
   // ---------------------------------------------------------------- Estado vacío
   if (!token) {
     return (
+      <>
       <TouchableOpacity
         disabled={!esEditable || cargando}
         onPress={() => { void capturar(); }}
@@ -341,6 +362,28 @@ export const CampoMultimedia = ({
           )}
         </View>
       </TouchableOpacity>
+      {/* El lienzo se monta en ambos estados (con y sin archivo) para permitir
+          volver a firmar sobre una firma existente. */}
+      <LienzoFirma
+        visible={lienzoVisible}
+        onCancelar={() => setLienzoVisible(false)}
+        onFirmar={async (uri) => {
+          setLienzoVisible(false);
+          setCargando(true);
+          try {
+            // El PNG sale a la cache de la aplicacion; `procesarSeleccion` lo copia
+            // enseguida a almacenamiento durable, como cualquier otro adjunto.
+            await procesarSeleccion({ uri, nombre: 'firma.png', mimeType: 'image/png' });
+          } catch (error) {
+            const detalle = error instanceof Error ? error.message : String(error);
+            console.error(`❌ [Firma] No se pudo registrar: ${detalle}`);
+            Alert.alert('No se pudo guardar la firma', 'Intente nuevamente.');
+          } finally {
+            setCargando(false);
+          }
+        }}
+      />
+      </>
     );
   }
 
@@ -407,6 +450,28 @@ export const CampoMultimedia = ({
           </Text>
         </View>
       )}
+
+      {/* El lienzo se monta en ambos estados (con y sin archivo) para permitir
+          volver a firmar sobre una firma existente. */}
+      <LienzoFirma
+        visible={lienzoVisible}
+        onCancelar={() => setLienzoVisible(false)}
+        onFirmar={async (uri) => {
+          setLienzoVisible(false);
+          setCargando(true);
+          try {
+            // El PNG sale a la cache de la aplicacion; `procesarSeleccion` lo copia
+            // enseguida a almacenamiento durable, como cualquier otro adjunto.
+            await procesarSeleccion({ uri, nombre: 'firma.png', mimeType: 'image/png' });
+          } catch (error) {
+            const detalle = error instanceof Error ? error.message : String(error);
+            console.error(`❌ [Firma] No se pudo registrar: ${detalle}`);
+            Alert.alert('No se pudo guardar la firma', 'Intente nuevamente.');
+          } finally {
+            setCargando(false);
+          }
+        }}
+      />
     </View>
   );
 };

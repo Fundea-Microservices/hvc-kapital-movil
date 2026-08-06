@@ -8,6 +8,70 @@ import { wipeLocalDatabase } from '../../data/local/services/database.service';
 const baseURL = process.env.EXPO_PUBLIC_API_URL;
 const baseCatalogosURL = process.env.EXPO_PUBLIC_API_CATALOGOS_URL;
 
+/**
+ * Diagnóstico de la URL base, en el arranque.
+ *
+ * Las variables `EXPO_PUBLIC_*` se INCRUSTAN EN EL BUNDLE al compilar, no se leen en
+ * tiempo de ejecución. Por eso editar el `.env` no cambia nada hasta reiniciar Metro
+ * con la caché limpia (`npx expo start -c`) y, en una build nativa, hasta recompilar.
+ * Este log muestra el valor que quedó REALMENTE dentro del bundle instalado, que es
+ * la única forma de saber si el `.env` llegó a aplicarse.
+ *
+ * Solo se registra la URL: nunca tokens ni credenciales.
+ */
+const diagnosticarUrlBase = (): void => {
+  console.log('🌐 [RED] URL base del API:', baseURL ?? '(SIN DEFINIR)');
+  console.log('🌐 [RED] URL base de catálogos:', baseCatalogosURL ?? '(SIN DEFINIR)');
+
+  if (!baseURL) {
+    console.error(
+      '❌ [RED] EXPO_PUBLIC_API_URL no llegó al bundle. Toda petición fallará con ' +
+      '"Network Error" porque axios intentará resolver una ruta relativa. ' +
+      'Reinicie con: npx expo start -c',
+    );
+    return;
+  }
+
+  // Se analiza sin `new URL()`: en Hermes su soporte es parcial y un fallo aquí
+  // dejaría la app sin arrancar por un simple diagnóstico.
+  const protocolo = baseURL.split('://')[0];
+  const resto = baseURL.split('://')[1] ?? '';
+  const autoridad = resto.split('/')[0];
+  const host = autoridad.split(':')[0];
+  const puerto = autoridad.includes(':') ? autoridad.split(':')[1] : '(por defecto)';
+
+  console.log(`🌐 [RED] protocolo=${protocolo} host=${host} puerto=${puerto}`);
+
+  // El guion bajo NO es válido en un nombre de host (RFC 952/1123). Android y muchos
+  // resolvedores lo rechazan, y el fallo se manifiesta exactamente como "Network
+  // Error", sin más detalle.
+  if (host.includes('_')) {
+    console.error(
+      `❌ [RED] El host "${host}" contiene GUION BAJO, que no es válido en DNS. ` +
+      'Android suele rechazarlo y el síntoma es un "Network Error" genérico. ' +
+      'Use guiones medios o la IP directa.',
+    );
+  }
+
+  if (protocolo === 'https') {
+    console.warn(
+      '⚠️ [RED] Se usa HTTPS. Si el certificado es autofirmado o no corresponde al ' +
+      'host, Android lo rechaza y también aparece como "Network Error". ' +
+      'Para descartarlo, pruebe temporalmente con http:// y su puerto.',
+    );
+  }
+
+  if (protocolo === 'http') {
+    console.log('🌐 [RED] HTTP en claro: requiere usesCleartextTraffic, que app.json ya declara.');
+  }
+
+  if (!baseURL.includes('/api/v1')) {
+    console.warn(`⚠️ [RED] La URL base no contiene "/api/v1": los endpoints darán 404.`);
+  }
+};
+
+diagnosticarUrlBase();
+
 // Instancia Central (Microservicio de Encuestas - Puerto 5030)
 export const apiClient = axios.create({
   baseURL,
@@ -70,6 +134,14 @@ const requestInterceptorInterceptor = async (config: InternalAxiosRequestConfig)
   // Versión de la app: permite al servidor denegar deltas si es obsoleta (Anexo 1, 4.4).
   config.headers['x-app-version'] = Application.nativeApplicationVersion || '1.0.0';
 
+  // URL COMPLETA a la que se va a pegar realmente. Es el dato que falta cuando algo
+  // devuelve "Network Error": revela dobles barras, un baseURL vacío o un puerto
+  // perdido. Se registran los tokens solo como presente/ausente, nunca su valor.
+  console.log(
+    `➡️ [RED] ${(config.method || 'get').toUpperCase()} ${config.baseURL ?? ''}${config.url ?? ''} ` +
+    `(device=${deviceToken ? 'sí' : 'no'} sesión=${sessionToken ? 'sí' : 'no'})`,
+  );
+
   return config;
 };
 
@@ -106,6 +178,29 @@ const responseInterceptorInterceptor = async (error: unknown) => {
 
   const originalRequest = error.config as (InternalAxiosRequestConfig & { _retry?: boolean }) | undefined;
   const currentInstance = originalRequest?.baseURL === baseCatalogosURL ? apiClientCatalogos : apiClient;
+
+  /**
+   * "Network Error" es el mensaje que da axios cuando **no hubo respuesta**: la
+   * petición ni siquiera llegó al servidor. El servidor puede estar perfectamente
+   * sano. Las causas reales, por frecuencia:
+   *   1. El host no resuelve (DNS), o lleva caracteres no válidos como el guion bajo.
+   *   2. El dispositivo no alcanza esa red (IP privada estando fuera de la VPN/WiFi).
+   *   3. HTTPS con certificado autofirmado o que no corresponde al host.
+   *   4. HTTP en claro sin `usesCleartextTraffic` (aquí ya está declarado).
+   *   5. El puerto está cerrado o el servicio no escucha.
+   * Sin este bloque, el usuario solo ve el modal rojo y no queda rastro de a dónde
+   * se intentó llegar.
+   */
+  if (!error.response) {
+    console.error('❌ [RED] Sin respuesta del servidor — la petición no llegó.');
+    console.error(`❌ [RED] Destino: ${originalRequest?.baseURL ?? ''}${originalRequest?.url ?? ''}`);
+    console.error(`❌ [RED] Código: ${error.code ?? '(ninguno)'} | Mensaje: ${error.message}`);
+    console.error(
+      '❌ [RED] Verifique, en este orden: que el host resuelva, que el dispositivo ' +
+      'esté en la misma red, y el certificado si es HTTPS.',
+    );
+  }
+
   if (!originalRequest) return Promise.reject(error);
 
   // SPRINT 2: Manejo de Expiración de Token (HTTP 401)
