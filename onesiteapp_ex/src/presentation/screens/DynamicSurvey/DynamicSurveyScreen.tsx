@@ -607,14 +607,47 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         Q.where('id_cliente', instanciaEncuestaUuid)
       ).fetch();
 
+      /**
+       * Nombre que identifica la tarjeta en la agenda.
+       *
+       * La versión anterior usaba un solo `find` con un OR: devolvía la PRIMERA
+       * pregunta cuya etiqueta contuviera "nombre", aunque más abajo existiera una
+       * llamada exactamente "Nombre Completo". En un formulario con "Nombre del
+       * negocio" antes que "Nombre Completo" se elegía la equivocada y, si esa estaba
+       * vacía, la tarjeta se quedaba en "NUEVA ENCUESTA" para siempre.
+       *
+       * Ahora se recorre por PRIORIDAD y se exige que la respuesta tenga contenido:
+       * una coincidencia peor con dato real es más útil que la mejor coincidencia
+       * vacía. Las etiquetas se comparan sin acentos ni mayúsculas.
+       */
+      const PRIORIDAD_ETIQUETAS = ['nombre completo', 'nombre del cliente', 'nombres', 'nombre'];
+
+      const normalizar = (texto: string): string =>
+        texto.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+
+      /** Respuesta de una pregunta, mirando también la primera fila si es de matriz. */
+      const respuestaDe = (idPregunta: string): string => {
+        const directa = mapa[idPregunta];
+        if (directa && directa.trim() !== '') return directa.trim();
+        // Clave compuesta `<idPregunta>_<uuidFila>` cuando la pregunta vive en una matriz.
+        const claveEnMatriz = Object.keys(mapa).find(k => k.startsWith(`${idPregunta}_`));
+        const enMatriz = claveEnMatriz ? mapa[claveEnMatriz] : '';
+        return enMatriz && enMatriz.trim() !== '' ? enMatriz.trim() : '';
+      };
+
       let nombreDetectado = 'NUEVA ENCUESTA';
-      const preguntaNombre = preguntas.find(p =>
-        p.etiqueta?.toLowerCase().includes('nombre completo') ||
-        p.etiqueta?.toLowerCase().includes('nombre')
-      );
-      if (preguntaNombre && mapa[preguntaNombre.id]) {
-        nombreDetectado = mapa[preguntaNombre.id].trim();
+      for (const clave of PRIORIDAD_ETIQUETAS) {
+        const candidata = preguntas.find(p => normalizar(p.etiqueta || '').includes(clave));
+        if (!candidata) continue;
+        const valorNombre = respuestaDe(String(candidata.id));
+        if (valorNombre !== '') {
+          // Se recorta: un nombre larguísimo rompe el diseño de la tarjeta.
+          nombreDetectado = valorNombre.length > 60 ? valorNombre.slice(0, 60) : valorNombre;
+          break;
+        }
       }
+
+      console.log(`🏷️ [AGENDA] Nombre de la tarjeta: "${nombreDetectado}"`);
 
       if (existeCliente.length === 0) {
         const nuevoCliente = clientePendienteCollection.prepareCreate((record) => {

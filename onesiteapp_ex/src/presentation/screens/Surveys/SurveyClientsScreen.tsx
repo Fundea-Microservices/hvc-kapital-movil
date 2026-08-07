@@ -181,10 +181,27 @@ const enhance = withObservables(['route'], ({ route }: any) => {
   return {
     // El sistema observa el registro de la encuesta para extraer su nombre en tiempo real
     encuesta: database.collections.get<LocalEncuesta>('local_encuesta').findAndObserve(idEncuesta),
+    /**
+     * `observeWithColumns` y NO `.query()` a secas.
+     *
+     * Una Query observada emite solo cuando cambia el CONJUNTO de filas que cumplen
+     * el criterio: altas, bajas o registros que entran/salen del filtro. Modificar una
+     * COLUMNA de una fila que ya estaba —renombrar la tarjeta de "NUEVA ENCUESTA" al
+     * nombre real al pausar— no altera ese conjunto, así que no emitía nada y la
+     * lista se quedaba con el texto anterior.
+     *
+     * El síntoma delator era que el nombre aparecía "al tocar": el toque cambia el
+     * estado del acordeón, la pantalla se vuelve a renderizar y lee el modelo, que en
+     * memoria ya estaba actualizado. Los datos siempre fueron correctos; lo que
+     * faltaba era el aviso de que habían cambiado.
+     *
+     * Se declaran las columnas que la lista MUESTRA o usa para filtrar. Añadir una
+     * columna nueva a la tarjeta obliga a añadirla también aquí.
+     */
     clientes: database.collections.get<LocalClientePendiente>('local_cliente_pendiente').query(
       Q.where('id_encuesta', idEncuesta),
-      Q.where('estado_gestion', 0) 
-    ),
+      Q.where('estado_gestion', 0)
+    ).observeWithColumns(['nombre', 'codigo', 'estado_gestion']),
   };
 });
 

@@ -526,8 +526,18 @@ const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
 const enhance = withObservables([], () => ({
   menuItems: database.collections.get<CatMenuAppex>('cat_menu_appex').query(Q.sortBy('orden', Q.asc)),
   encuestas: database.collections.get<LocalEncuesta>('local_encuesta').query(),
-  capturas: database.collections.get<LocalCaptura>('local_captura').query(),
-  clientes: database.collections.get<LocalClientePendiente>('local_cliente_pendiente').query(),
+  // Mismo motivo que en SurveyClientsScreen: una Query observada solo avisa cuando
+  // cambia el CONJUNTO de filas, no cuando cambia una columna de una fila existente.
+  // Las métricas de este panel se calculan sobre `estado_sincro` y `estado_gestion`,
+  // que cambian sin que se cree ni se borre ninguna fila: al sincronizar, los
+  // contadores de pendientes y enviadas se quedaban congelados hasta salir y volver
+  // a entrar a la pantalla.
+  capturas: database.collections.get<LocalCaptura>('local_captura')
+    .query()
+    .observeWithColumns(['estado_sincro', 'uuid_instancia']),
+  clientes: database.collections.get<LocalClientePendiente>('local_cliente_pendiente')
+    .query()
+    .observeWithColumns(['nombre', 'estado_gestion', 'id_cliente']),
 }));
 
 export const DashboardScreen = enhance(Dashboard as any);
