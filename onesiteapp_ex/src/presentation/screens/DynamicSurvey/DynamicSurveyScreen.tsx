@@ -33,36 +33,18 @@ import { resolverIdDesdeToken, sanearTokenQEnJSON } from '../../../domain/encues
 import { evaluarVisibilidad } from '../../../domain/encuesta/visibilidad';
 import { aplicarCalculos as calcularDominio } from '../../../domain/encuesta/calculo';
 import { limpiarDescendientesDeCascada } from '../../../domain/encuesta/cascada';
+import {
+  obtenerOpciones as obtenerOpcionesDominio,
+  obtenerArbolOpciones as obtenerArbolOpcionesDominio,
+} from '../../../domain/encuesta/catalogos';
+import { aOpcionCatalogo } from '../../../data/local/adapters/preguntaAdapter';
 import * as ImagePicker from 'expo-image-picker';
 import { consumirCapturaPendiente } from '../../../data/local/services/capturaPendiente';
 import { registrarArchivoLocal } from '../../../data/local/services/multimedia.service';
 
-/** Nodo del árbol de opciones con drill-down jerárquico (SELECT anidado). */
-interface NodoOpcionArbol {
-  valor: string;
-  hijos: NodoOpcionArbol[];
-}
-
-/**
- * Nombre de catálogo bajo el que se buscan las opciones de una pregunta en
- * local_catalogo_opciones. Para origen_datos_tipo='API' es el nombre sintético
- * "API_<idPregunta>" que genera syncManager.sincronizarCatalogosApi() — en ese
- * caso origen_datos_cmd es la CLAVE que el backend resuelve contra la API
- * externa (ej. "departamentos"), NO un nombre de catálogo local, así que no
- * se puede usar directamente para buscar.
- */
-const resolverNombreCatalogo = (p: LocalEstructuraPregunta): string => {
-  const raw = leerRaw<RawPregunta>(p);
-  const tipo = (p.origen_datos_tipo || raw.origen_datos_tipo || '').trim().toUpperCase();
-  if (tipo === 'API') return `API_${p.id}`;
-  return String(p.opciones || raw.opciones || raw.origen_datos_cmd || '');
-};
-
-/** true si la pregunta es de origen API (ver resolverNombreCatalogo). */
-const esOrigenApiPregunta = (p: LocalEstructuraPregunta): boolean => {
-  const raw = leerRaw<RawPregunta>(p);
-  return (p.origen_datos_tipo || raw.origen_datos_tipo || '').trim().toUpperCase() === 'API';
-};
+// `NodoOpcionArbol`, `resolverNombreCatalogo` y `esOrigenApiPregunta` se eliminaron en
+// el Sprint 11: sus equivalentes viven en `domain/encuesta/catalogos.ts` (`NodoOpcion`
+// y `nombreCatalogoDe`), ya con pruebas.
 
 interface Props {
   route: RutaDe<'DynamicSurvey'>;
@@ -90,6 +72,13 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     () => preguntas.map(aPreguntaEncuesta),
     [preguntas],
   );
+
+  /**
+   * Opciones de catalogo aplanadas al contrato del dominio. Se memoiza porque la
+   * lista completa puede tener miles de filas y se recorre en cada render de cada
+   * pregunta de tipo SELECT.
+   */
+  const catalogosDominio = useMemo(() => catalogos.map(aOpcionCatalogo), [catalogos]);
 
   /** Acceso por id, para traducir un modelo a su equivalente de dominio. */
   const dominioPorId = useMemo(() => {
@@ -798,191 +787,30 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
     }
   };
 
+  /**
+   * Envoltorios delgados sobre `domain/encuesta/catalogos`.
+   *
+   * La resolucion de opciones vive en el dominio desde el Sprint 11: eran las dos
+   * funciones que mas fallos habian producido en el proyecto y no se podian probar
+   * sin emulador. Aqui solo queda traducir modelos a contratos y serializar para
+   * `SurveyField`, que recibe las opciones como JSON.
+   *
+   * El `null` del dominio se traduce a cadena vacia, que es como la pantalla senala
+   * "catalogo no disponible offline"; un `[]` significa "hay fuente, pero ninguna
+   * opcion aplica". Colapsar ambos casos cambiaria lo que ve el asesor.
+   */
   const obtenerOpciones = (p: LocalEstructuraPregunta, uuidFila?: string | null): string => {
-    if (!p) return JSON.stringify([]);
-
-    const rawPregunta = leerRaw<RawPregunta>(p);
-    const tipoOrigenDatos = (p.origen_datos_tipo || rawPregunta.origen_datos_tipo || '').trim().toUpperCase();
-    const esOrigenApi = tipoOrigenDatos === 'API';
-    const opcionesString = p.opciones || rawPregunta.opciones || rawPregunta.origen_datos_cmd || '';
-
-    if (!opcionesString && !esOrigenApi) return JSON.stringify([]);
-
-    const rawString = String(opcionesString || '').trim();
-    // 1. CASO A: El backend envió un arreglo JSON directo (Ej: '["Masculino", "Femenino"]')
-    if (rawString.startsWith('[')) {
-      return rawString;
-    }
-
-    // 2. CASO B: Opciones enviadas como texto separado por Pipes (|) o Comas (,) que NO son
-    // catálogos. No aplica a origen 'API': ahí el string es una URL, no una lista inline.
-    if (!esOrigenApi && !rawString.toUpperCase().includes('CAT_')) {
-      if (rawString.includes('|')) {
-        return JSON.stringify(rawString.split('|').map(o => o.trim()));
-      }
-      if (rawString.includes(',')) {
-        return JSON.stringify(rawString.split(',').map(o => o.trim()));
-      }
-    }
-    // 3. CASO C: Búsqueda en Catálogos SQLite con NORMALIZACIÓN EXTREMA
-    // Esta sub-función elimina tildes, acentos, espacios extra y estandariza mayúsculas/minúsculas
-    const normalizar = (str: string) =>
-      String(str)
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Quita todas las tildes (é -> e)
-        .trim().toLowerCase().replace('cat_', '');
-
-    // Para origen 'API' se busca por el nombre sintético "API_<idPregunta>" — el
-    // OrigenDatosCmd original (la clave que resuelve el backend) no sirve como nombre de catálogo.
-    const strBuscar = normalizar(esOrigenApi ? resolverNombreCatalogo(p) : rawString);
-
-    let idOpcionPadreRequerido: string | null = null;
-    if (p.regla_visibilidad && p.regla_visibilidad.includes('dependeDeCatalogo')) {
-      try {
-        const reglaCascada = JSON.parse(sanearTokenQEnJSON(p.regla_visibilidad));
-        const idPadreCascada = resolverIdDesdeToken(String(reglaCascada.dependeDeCatalogo), aDominio(p), preguntasDominio);
-        // La respuesta del padre puede estar acotada a la fila de matriz actual.
-        const respuestaPadreTxt = (uuidFila ? respuestas[`${idPadreCascada}_${uuidFila}`] : undefined) ?? respuestas[idPadreCascada];
-
-        if (respuestaPadreTxt) {
-          const preguntaPadre = preguntas.find(x => x.id === idPadreCascada);
-          const catalogoPadreNormalizado = normalizar(preguntaPadre ? resolverNombreCatalogo(preguntaPadre) : '');
-          const padreEsOrigenApi = !!preguntaPadre && esOrigenApiPregunta(preguntaPadre);
-
-          const candidatosPadre = catalogos.filter(c => String(leerRaw<RawCatalogoOpcion>(c).valor_opcion) === respuestaPadreTxt);
-
-          const candidatosDelCatalogoPadre = catalogoPadreNormalizado
-            ? candidatosPadre.filter(c => {
-                const rCat = leerRaw<RawCatalogoOpcion>(c);
-                const nombreCatBD = normalizar(rCat.nombre_catalogo || '');
-                const codigoCatBD = normalizar(rCat.codigo_catalogo || '');
-                // Origen 'API': nombre sintético exacto — con "includes" un texto
-                // homónimo en dos catálogos distintos (ej. un municipio y un
-                // departamento con el mismo nombre) puede resolver al catálogo
-                // equivocado y dejar la cascada vacía o mal enlazada.
-                if (padreEsOrigenApi) {
-                  return nombreCatBD === catalogoPadreNormalizado || codigoCatBD === catalogoPadreNormalizado;
-                }
-                return nombreCatBD.includes(catalogoPadreNormalizado) ||
-                  codigoCatBD.includes(catalogoPadreNormalizado) ||
-                  catalogoPadreNormalizado.includes(nombreCatBD);
-              })
-            : [];
-
-          const catPadre = candidatosDelCatalogoPadre[0] || candidatosPadre[0];
-
-          if (catPadre) idOpcionPadreRequerido = String(leerRaw<RawCatalogoOpcion>(catPadre).id_remoto || leerRaw<RawCatalogoOpcion>(catPadre).codigo_opcion);
-        } else {
-          return ''; // Si no ha respondido al padre, el hijo se muestra vacío
-        }
-      } catch (e) { console.warn("Error evaluando cascada"); }
-    }
-
-    const items = catalogos
-      .filter(c => {
-        const rawCat = leerRaw<RawCatalogoOpcion>(c);
-
-        const nombreCatBD = normalizar(rawCat.nombre_catalogo || '');
-        const codigoCatBD = normalizar(rawCat.codigo_catalogo || '');
-
-        // Origen 'API': el nombre sintético "API_<idPregunta>" lo generamos
-        // nosotros y siempre es exacto — con "includes", la pregunta id 1
-        // (API_1) también matchea API_10, API_11, API_100. Para catálogos
-        // maestros se conserva la búsqueda flexible (espacios, guiones).
-        const perteneceCatalogo = esOrigenApi
-          ? (nombreCatBD === strBuscar || codigoCatBD === strBuscar)
-          : (nombreCatBD === strBuscar ||
-              codigoCatBD === strBuscar ||
-              nombreCatBD.includes(strBuscar) ||
-              codigoCatBD.includes(strBuscar));
-
-        if (idOpcionPadreRequerido) {
-          return perteneceCatalogo && String(rawCat.id_padre_opcion) === idOpcionPadreRequerido;
-        }
-
-        return perteneceCatalogo;
-      })
-      .map(c => String(leerRaw<RawCatalogoOpcion>(c).valor_opcion));
-
-    if (items.length === 0 && !esOrigenApi && !rawString.toUpperCase().includes('CAT_')) {
-      return JSON.stringify([rawString]);
-    }
-
-    return items.length > 0 ? JSON.stringify(items) : '';
+    const valores = obtenerOpcionesDominio(
+      aDominio(p), catalogosDominio, respuestas, preguntasDominio, uuidFila,
+    );
+    return valores === null ? '' : JSON.stringify(valores);
   };
 
-   // navegación drill-down (Padre→Hijo→Nieto) dentro del mismo input. Devuelve un JSON
-  
   const obtenerArbolOpciones = (p: LocalEstructuraPregunta, uuidFila?: string | null): string => {
-    if (!p) return JSON.stringify([]);
-
-    const rawPregunta = leerRaw<RawPregunta>(p);
-    const tipoOrigenDatos = (p.origen_datos_tipo || rawPregunta.origen_datos_tipo || '').trim().toUpperCase();
-    const esOrigenApi = tipoOrigenDatos === 'API';
-    const opcionesString = p.opciones || rawPregunta.opciones || rawPregunta.origen_datos_cmd || '';
-    const rawString = String(opcionesString || '').trim();
-    // ya vienen filtradas a un solo padre → planas.
-    const esCascadaHija = !!(p.regla_visibilidad && p.regla_visibilidad.includes('dependeDeCatalogo'));
-    const upper = rawString.toUpperCase();
-    // Origen 'API': el string es una URL, nunca una lista inline aunque contenga ',' o '|'.
-    const esInline = !esOrigenApi && (rawString.startsWith('[') ||
-      (!upper.includes('CAT_') && (rawString.includes('|') || rawString.includes(','))));
-
-    // Origen 'API' NUNCA es drill-down: el backend emite un solo nivel por
-    // catálogo (API_<idPregunta>), y los "hijos" que pudiera haber en
-    // local_catalogo_opciones (id_padre_opcion) pertenecen a OTRA pregunta
-    // (ej. los municipios de Departamento). Sin esta guarda, el select de
-    // Departamento navegaba hacia dentro y terminaba guardando un municipio.
-    if (!rawString || esInline || esCascadaHija || esOrigenApi) {
-      // Árbol plano reutilizando la resolución existente.
-      let planas: string[] = [];
-      try { planas = JSON.parse(obtenerOpciones(p, uuidFila) || '[]'); } catch { planas = []; }
-      return JSON.stringify(planas.map(v => ({ valor: v, hijos: [] })));
-    }
-
-    const normalizar = (str: string) =>
-      String(str)
-        .normalize("NFD").replace(/[̀-ͯ]/g, "")
-        .trim().toLowerCase().replace('cat_', '');
-
-    // Origen 'API': se busca por el nombre sintético "API_<idPregunta>" (ver obtenerOpciones).
-    const strBuscar = normalizar(esOrigenApi ? resolverNombreCatalogo(p) : rawString);
-
-    // Opciones que pertenecen al catálogo de esta pregunta (mismo predicado que obtenerOpciones).
-    const delCatalogo = catalogos.filter(c => {
-      const rc = leerRaw<RawCatalogoOpcion>(c);
-      const nombreCatBD = normalizar(rc.nombre_catalogo || '');
-      const codigoCatBD = normalizar(rc.codigo_catalogo || '');
-      // Origen 'API': nombre sintético exacto (ver el mismo criterio en obtenerOpciones).
-      if (esOrigenApi) return nombreCatBD === strBuscar || codigoCatBD === strBuscar;
-      return nombreCatBD === strBuscar || codigoCatBD === strBuscar ||
-        nombreCatBD.includes(strBuscar) || codigoCatBD.includes(strBuscar);
-    });
-
-    if (delCatalogo.length === 0) return JSON.stringify([]);
-
-    const idsDelCatalogo = new Set(delCatalogo.map(c => String(leerRaw<RawCatalogoOpcion>(c).id_remoto)));
-
-    const construirNodo = (reg: RawCatalogoOpcion, visitados: Set<string>, prof: number): NodoOpcionArbol => {
-      const idRemoto = String(reg.id_remoto);
-      let hijos: NodoOpcionArbol[] = [];
-      if (prof < 5 && !visitados.has(idRemoto)) {
-        visitados.add(idRemoto);
-        hijos = catalogos
-          .filter(c => String(leerRaw<RawCatalogoOpcion>(c).id_padre_opcion) === idRemoto)
-          .map(c => construirNodo(leerRaw<RawCatalogoOpcion>(c), visitados, prof + 1));
-      }
-      return { valor: String(reg.valor_opcion), hijos };
-    };
-
-    // Raíces: opciones del catálogo sin padre dentro del propio catálogo.
-    const roots = delCatalogo.filter(c => {
-      const idPadre = leerRaw<RawCatalogoOpcion>(c).id_padre_opcion;
-      const idPadreStr = String(idPadre ?? '').trim();
-      return !idPadre || idPadreStr === '' || idPadreStr.toLowerCase() === 'null' || !idsDelCatalogo.has(idPadreStr);
-    });
-
-    const arbol = roots.map(c => construirNodo(leerRaw<RawCatalogoOpcion>(c), new Set<string>(), 0));
-    return JSON.stringify(arbol);
+    const arbol = obtenerArbolOpcionesDominio(
+      aDominio(p), catalogosDominio, respuestas, preguntasDominio, uuidFila,
+    );
+    return arbol === null ? '' : JSON.stringify(arbol);
   };
 
   return (
