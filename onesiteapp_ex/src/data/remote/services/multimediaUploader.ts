@@ -18,7 +18,7 @@ export interface ResumenSubida {
 }
 
 /** Clasificación del resultado de un intento. Decide si se vuelve a intentar. */
-type Clasificacion = 'SUBIDO' | 'REINTENTABLE' | 'RECHAZADO' | 'ESPERAR';
+export type Clasificacion = 'SUBIDO' | 'REINTENTABLE' | 'RECHAZADO' | 'ESPERAR';
 
 /**
  * Traduce el fallo a una de las tres decisiones posibles.
@@ -27,8 +27,12 @@ type Clasificacion = 'SUBIDO' | 'REINTENTABLE' | 'RECHAZADO' | 'ESPERAR';
  * nunca va a aceptar (por peso o por extensión) consume el cupo de cada ciclo y deja
  * fuera a los archivos que sí podrían subir. Y al revés: marcar como rechazado un
  * fallo de red destruye evidencia recuperable.
+ *
+ * Se exporta para poder probarla directamente: es la función con más ramas del
+ * archivo y llegar hasta ella simulando axios, el sistema de archivos y WatermelonDB
+ * costaría mucho más que probar la decisión en sí.
  */
-const clasificarError = (error: unknown): { clase: Clasificacion; detalle: string } => {
+export const clasificarError = (error: unknown): { clase: Clasificacion; detalle: string } => {
   if (!axios.isAxiosError(error)) {
     return { clase: 'REINTENTABLE', detalle: error instanceof Error ? error.message : String(error) };
   }
