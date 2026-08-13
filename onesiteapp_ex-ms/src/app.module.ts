@@ -12,6 +12,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { SyncModule } from './modules/sync/sync.module';
 import { SurveysModule } from './modules/surveys/surveys.module';
 import { MultimediaModule } from './modules/multimedia/multimedia.module';
+import { DiagnosticsModule } from './modules/diagnostics/diagnostics.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { MultimediaModule } from './modules/multimedia/multimedia.module';
     SyncModule,
     SurveysModule,
     MultimediaModule,
+    DiagnosticsModule,
     //DeviceModule,
   ],
   controllers: [AppController,DeviceController],
