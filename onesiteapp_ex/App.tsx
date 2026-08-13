@@ -5,6 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as Application from 'expo-application';
 import { apiClient } from './src/core/network/apiClient';
 import { SyncOnReconnect } from './src/presentation/components/SyncOnReconnect';
+import { registrarError } from './src/data/local/services/bitacora.service';
 import "./global.css";
 
 import { EnrollmentScreen } from './src/presentation/screens/Enrollment/EnrollmentScreen';
@@ -18,6 +19,39 @@ import { SurveyClientsScreen } from './src/presentation/screens/Surveys/SurveyCl
 
 const queryClient = new QueryClient();
 const Stack = createNativeStackNavigator();
+
+/**
+ * Captura los errores que NADIE atrapó y los deja en la bitácora local.
+ *
+ * Los `try/catch` cubren lo que se previó que podía fallar; esto cubre el resto —un
+ * `undefined` inesperado en un render, una promesa sin `catch`— que es justo lo que
+ * hace que la aplicación se cierre en campo sin dejar rastro.
+ *
+ * Se instala FUERA del componente para que ocurra una sola vez, no en cada render.
+ * El manejador anterior se conserva y se invoca al final: sustituirlo sin más
+ * desactivaría la pantalla roja de error en desarrollo.
+ */
+const instalarCapturaGlobal = (): void => {
+  const global = globalThis as {
+    ErrorUtils?: {
+      getGlobalHandler: () => (error: Error, esFatal?: boolean) => void;
+      setGlobalHandler: (manejador: (error: Error, esFatal?: boolean) => void) => void;
+    };
+  };
+  if (!global.ErrorUtils) return;
+
+  const anterior = global.ErrorUtils.getGlobalHandler();
+
+  global.ErrorUtils.setGlobalHandler((error, esFatal) => {
+    // El registro es asíncrono y el proceso puede morir enseguida si el error es
+    // fatal: se lanza sin esperar y con su propio catch, porque fallar aquí no debe
+    // impedir que el manejador original haga su trabajo.
+    void registrarError('app.errorNoCapturado', error, { fatal: !!esFatal }).catch(() => {});
+    anterior(error, esFatal);
+  });
+};
+
+instalarCapturaGlobal();
 
 export default function App() {
   const { isLoggedIn, isEnrolled, checkLocalState } = useAuthStore();

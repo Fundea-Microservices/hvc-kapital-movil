@@ -20,6 +20,8 @@ import * as SecureStore from 'expo-secure-store';
 import axios from 'axios';
 import { estamparIdCaptura, contarPendientesDeSubida } from './multimedia.service';
 import { subirMultimediaPendiente } from '../../remote/services/multimediaUploader';
+import { enviarBitacora } from '../../remote/services/bitacoraSender';
+import { registrarError } from './bitacora.service';
 
 // ============================================================================
 // 1. FUNCIÓN PRINCIPAL DE SINCRONIZACIÓN DE ENCUESTAS (Deltas)
@@ -251,6 +253,9 @@ export const runFullSync = async () => {
             ? (textoDe((err.response?.data ?? {}) as FilaServidor, 'message') ?? err.message)
             : err instanceof Error ? err.message : String(err);
           console.error(`❌ [SYNC PUSH ERROR] Fallo al subir UUID ${uuidBase}. Detalle:`, mensajeBackend);
+          // Queda en la bitacora para que soporte pueda verlo sin el dispositivo
+          // delante. El uuid identifica la instancia, no al encuestado.
+          await registrarError('syncManager.submit', err, { uuidBase, idEncuesta: String(idEncuesta) });
           // Omitimos lanzar el throw para que intente subir las demás encuestas agrupadas si hay varias
         }
       }
@@ -272,6 +277,7 @@ export const runFullSync = async () => {
     } catch (error) {
       const detalle = error instanceof Error ? error.message : String(error);
       console.error(`❌ [Multimedia] La fase de subida falló por completo: ${detalle}`);
+      await registrarError('syncManager.FASE1B', error);
     }
 
     // =======================================================================
@@ -417,8 +423,25 @@ export const runFullSync = async () => {
     // ========================================================================
     await confirmarYSellarSincronizacion();
 
+    // ========================================================================
+    // 5. ENVÍO DE LA BITÁCORA DE ERRORES
+    // ========================================================================
+    // Va al FINAL a propósito: el diagnóstico es lo menos importante del ciclo. Si
+    // algo falla aquí, lo que no puede pasar es que arrastre consigo la descarga de
+    // estructuras ni el envío de capturas, que es el trabajo real del asesor.
+    // `enviarBitacora` nunca lanza; el try/catch es una segunda barrera.
+    try {
+      await enviarBitacora();
+    } catch (error) {
+      const detalle = error instanceof Error ? error.message : String(error);
+      console.warn(`⚠️ [Bitácora] Fase de envío omitida: ${detalle}`);
+    }
+
   } catch (error) {
     console.error("❌ Error crítico durante la sincronización:", error);
+    // Se registra ANTES de relanzar: este es el error que el asesor ve como "no se
+    // pudo sincronizar" y del que hoy no queda ningún rastro consultable.
+    await registrarError('syncManager.runFullSync', error);
     throw error;
   }
   finally {

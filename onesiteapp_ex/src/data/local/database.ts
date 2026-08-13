@@ -15,6 +15,7 @@ import { migrations } from './migrations';
 import { CatalogoOpcion } from './models/CatalogoOpcion';
 import LocalClientePendiente from './models/LocalClientePendiente';
 import LocalMultimedia from './models/LocalMultimedia';
+import LocalBitacoraError from './models/LocalBitacoraError';
 
 // 1. Configurar el adaptador para SQLite
 const adapter = new SQLiteAdapter({
@@ -42,6 +43,7 @@ export const database = new Database({
     LocalCatalogo,
     CatalogoOpcion,
     LocalClientePendiente,
-    LocalMultimedia
+    LocalMultimedia,
+    LocalBitacoraError
   ],
 });

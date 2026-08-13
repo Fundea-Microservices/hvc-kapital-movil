@@ -152,5 +152,27 @@ export const migrations = schemaMigrations({
         }),
       ],
     },
+    {
+      // Bitácora de errores. Va en el MISMO commit que la subida de `version` a 9.
+      toVersion: 9,
+      steps: [
+        createTable({
+          name: 'local_bitacora_error',
+          columns: [
+            { name: 'nivel', type: 'string' },
+            { name: 'origen', type: 'string' },
+            { name: 'mensaje', type: 'string' },
+            { name: 'detalle', type: 'string', isOptional: true },
+            { name: 'contexto_json', type: 'string', isOptional: true },
+            { name: 'version_app', type: 'string' },
+            { name: 'plataforma', type: 'string' },
+            { name: 'epoch_ms', type: 'number', isIndexed: true },
+            { name: 'estado_envio', type: 'number', isIndexed: true },
+            { name: 'intentos', type: 'number' },
+          ],
+          unsafeSql: idempotente,
+        }),
+      ],
+    },
   ],
 });

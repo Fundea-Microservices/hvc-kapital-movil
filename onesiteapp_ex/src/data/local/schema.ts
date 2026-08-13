@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 8, // v8: local_multimedia (cola de archivos adjuntos pendientes de subir)
+  version: 9, // v9: local_bitacora_error (diagnóstico de fallos en campo)
   tables: [
     // Tabla para control de sincronización por tabla (Regla 4.4 y 4.5)
     tableSchema({
@@ -192,6 +192,35 @@ export const schema = appSchema({
         { name: 'id_captura_servidor', type: 'string', isOptional: true },
         { name: 'fecha_captura', type: 'number' },
         { name: 'fecha_subida', type: 'number', isOptional: true },
+      ],
+    }),
+
+    /**
+     * Bitácora de errores pendientes de enviar (v9).
+     *
+     * Cuando la aplicación falla en campo —sin señal, a horas de la agencia— hoy no
+     * queda ningún rastro. Esta tabla guarda el error en el dispositivo y una fase del
+     * sync lo sube después. El saneado (credenciales, datos del encuestado) vive en
+     * `domain/diagnostico/bitacora.ts`, que es puro y está probado.
+     *
+     * Como todas las tablas locales: cada columna que declare el modelo tiene que
+     * existir aquí, y `created_at`/`updated_at` NO se declaran.
+     */
+    tableSchema({
+      name: 'local_bitacora_error',
+      columns: [
+        { name: 'nivel', type: 'string' },
+        { name: 'origen', type: 'string' },
+        { name: 'mensaje', type: 'string' },
+        { name: 'detalle', type: 'string', isOptional: true },
+        { name: 'contexto_json', type: 'string', isOptional: true },
+        { name: 'version_app', type: 'string' },
+        { name: 'plataforma', type: 'string' },
+        { name: 'epoch_ms', type: 'number', isIndexed: true },
+        // 0 pendiente | 2 enviado. Se usan los mismos códigos que local_multimedia
+        // para no obligar a recordar dos convenciones distintas.
+        { name: 'estado_envio', type: 'number', isIndexed: true },
+        { name: 'intentos', type: 'number' },
       ],
     }),
 
