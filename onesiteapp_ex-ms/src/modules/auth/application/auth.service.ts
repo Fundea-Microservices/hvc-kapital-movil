@@ -1,8 +1,14 @@
-import { Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  ForbiddenException,
+  ConflictException,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { LoginDto } from '../domain/dtos/login.dto';
+import { ChangePasswordDto } from '../domain/dtos/change-password.dto';
 import { randomBytes } from 'crypto';
 
 @Injectable()
@@ -16,7 +22,7 @@ export class AuthService {
     // 1. VALIDACIÓN FÍSICA (Regla Crítica: El equipo debe estar activo)
     const dispositivo = await this.dataSource.query(
       `SELECT IdDispositivo, Estado, IdEmpresa FROM Dispositivos_AppEx WHERE DeviceToken = @0`,
-      [deviceToken]
+      [deviceToken],
     );
 
     if (!dispositivo.length) {
@@ -28,17 +34,22 @@ export class AuthService {
 
     // 2. VALIDACIÓN LÓGICA (Credenciales)
     const usuario = await this.dataSource.query(
-      `SELECT IdUsuario, PasswordHash, IdRol, NombreCompleto, Estado, IdEmpresa FROM Usuarios_AppEx WHERE Username = @0`,
-      [dto.username]
+      `SELECT IdUsuario, PasswordHash, IdRol, NombreCompleto, Estado, IdEmpresa, RequiereCambioPassword FROM Usuarios_AppEx WHERE Username = @0`,
+      [dto.username],
     );
 
     // Si el usuario no existe o está dado de baja (Estado = 0)
     if (!usuario.length || !usuario[0].Estado) {
-      throw new UnauthorizedException('Credenciales inválidas o usuario inactivo'); // 401
+      throw new UnauthorizedException(
+        'Credenciales inválidas o usuario inactivo',
+      ); // 401
     }
 
     // Comparamos la contraseña en texto plano enviada por la app contra el Hash de BCrypt
-    const isPasswordValid = await bcrypt.compare(dto.password, usuario[0].PasswordHash);
+    const isPasswordValid = await bcrypt.compare(
+      dto.password,
+      usuario[0].PasswordHash,
+    );
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Credenciales inválidas'); // 401
@@ -51,19 +62,21 @@ export class AuthService {
       usuario[0].IdEmpresa != null &&
       Number(dispositivo[0].IdEmpresa) !== Number(usuario[0].IdEmpresa)
     ) {
-      throw new ForbiddenException('El usuario no pertenece a la empresa de este dispositivo'); // 403
+      throw new ForbiddenException(
+        'El usuario no pertenece a la empresa de este dispositivo',
+      ); // 403
     }
 
     // 3. GENERACIÓN DE SESIÓN (Access Token y Refresh Token)
     // Payload del JWT que la app enviará en futuras peticiones
-    const payload = { 
-      sub: usuario[0].IdUsuario, 
-      rol: usuario[0].IdRol 
+    const payload = {
+      sub: usuario[0].IdUsuario,
+      rol: usuario[0].IdRol,
     };
 
     // Firmamos el JWT (toma la duración de las variables de entorno)
     const accessToken = this.jwtService.sign(payload);
-    
+
     // Generamos un Refresh Token robusto
     const refreshToken = randomBytes(64).toString('hex');
     const fechaExpiracion = new Date();
@@ -73,7 +86,12 @@ export class AuthService {
     await this.dataSource.query(
       `INSERT INTO Sesiones_AppEx (IdUsuario, IdDispositivo, RefreshToken, FechaExpiracion, Activa)
        VALUES (@0, @1, @2, @3, 1)`,
-      [usuario[0].IdUsuario, dispositivo[0].IdDispositivo, refreshToken, fechaExpiracion]
+      [
+        usuario[0].IdUsuario,
+        dispositivo[0].IdDispositivo,
+        refreshToken,
+        fechaExpiracion,
+      ],
     );
 
     // 4. RETORNO DE RESULTADOS
@@ -84,8 +102,64 @@ export class AuthService {
       user_id: usuario[0].IdUsuario,
       nombrecompleto: usuario[0].NombreCompleto,
       id_rol: usuario[0].IdRol,
-      estado: usuario[0].Estado
+      estado: usuario[0].Estado,
+      // Bandera de primer ingreso: la app la usa para forzar el cambio de contraseña
+      // antes de dejar entrar al Dashboard. Se normaliza a booleano porque mssql
+      // devuelve el BIT como 1/0 (o true/false según driver).
+      requiereCambioPassword: !!usuario[0].RequiereCambioPassword,
     };
+  }
+
+  /**
+   * Cambio obligatorio de contraseña (primer ingreso).
+   *
+   * El usuario ya está autenticado —el `userId` viene del JWT verificado en el
+   * controlador— así que aquí solo se valida la contraseña actual y se persiste la
+   * nueva. Las reglas de complejidad las garantiza `ChangePasswordSchema` antes de
+   * llegar; este método impone las dos reglas que requieren el hash almacenado:
+   * que la actual sea correcta y que la nueva no repita la actual.
+   */
+  async cambiarPassword(userId: number, dto: ChangePasswordDto) {
+    const usuario = await this.dataSource.query(
+      `SELECT PasswordHash FROM Usuarios_AppEx WHERE IdUsuario = @0 AND Estado = 1`,
+      [userId],
+    );
+
+    if (!usuario.length) {
+      throw new UnauthorizedException('Usuario no encontrado o dado de baja'); // 401
+    }
+
+    const hashActual = usuario[0].PasswordHash;
+
+    // La contraseña temporal enviada debe coincidir con el hash almacenado.
+    const actualValida = await bcrypt.compare(dto.passwordActual, hashActual);
+    if (!actualValida) {
+      throw new UnauthorizedException('La contraseña actual no es correcta'); // 401
+    }
+
+    // Defensa en profundidad: aunque el schema ya rechaza nueva === actual en texto
+    // plano, un usuario podría reenviar la temporal con otra capitalización de la
+    // "actual"; comparamos también contra el hash para no reciclar la credencial.
+    const nuevaIgualAlaActual = await bcrypt.compare(
+      dto.passwordNueva,
+      hashActual,
+    );
+    if (nuevaIgualAlaActual) {
+      throw new ConflictException(
+        'La nueva contraseña no puede ser igual a la actual',
+      ); // 409
+    }
+
+    const nuevoHash = await bcrypt.hash(dto.passwordNueva, 10);
+
+    await this.dataSource.query(
+      `UPDATE Usuarios_AppEx
+       SET PasswordHash = @0, RequiereCambioPassword = 0, FechaUltimoCambioPassword = GETDATE()
+       WHERE IdUsuario = @1`,
+      [nuevoHash, userId],
+    );
+
+    return { message: 'Contraseña actualizada correctamente' };
   }
 
   // 1. Método: RefrescarToken (POST) sprint 2
@@ -96,7 +170,7 @@ export class AuthService {
        FROM Sesiones_AppEx s
        INNER JOIN Usuarios_AppEx u ON s.IdUsuario = u.IdUsuario
        WHERE s.RefreshToken = @0`,
-      [refreshToken]
+      [refreshToken],
     );
 
     if (!session.length) {
@@ -109,7 +183,9 @@ export class AuthService {
     if (!Activa || new Date() > new Date(FechaExpiracion) || !Estado) {
       // Si es inválida, nos aseguramos de marcarla inactiva por seguridad
       await this.cerrarSesion(refreshToken);
-      throw new UnauthorizedException('Sesión expirada, inactiva o usuario dado de baja. Inicie sesión nuevamente.');
+      throw new UnauthorizedException(
+        'Sesión expirada, inactiva o usuario dado de baja. Inicie sesión nuevamente.',
+      );
     }
 
     // Generamos un nuevo Access Token por 20 minutos
@@ -129,7 +205,7 @@ export class AuthService {
       `UPDATE Sesiones_AppEx 
        SET Activa = 0 
        WHERE RefreshToken = @0 AND Activa = 1`,
-      [refreshToken]
+      [refreshToken],
     );
 
     return {
@@ -145,7 +221,7 @@ export class AuthService {
        FROM Usuarios_AppEx u
        INNER JOIN Roles_Permisos_AppEx r ON u.IdRol = r.IdRol
        WHERE u.IdUsuario = @0 AND u.Estado = 1`,
-      [userId]
+      [userId],
     );
 
     if (!permisos.length) {
@@ -162,5 +238,4 @@ export class AuthService {
       permisosGranulares: JSON.parse(permisos[0].PermisosJSON),
     };
   }
-
 }
