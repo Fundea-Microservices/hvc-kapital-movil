@@ -9,20 +9,36 @@ interface AuthState {
   token: string | null;
   userId: number | null;
   nombreCompleto: string | null;
+  /**
+   * Primer ingreso: cuando es `true`, el gate de `App.tsx` intercepta la navegación
+   * y muestra la pantalla de cambio de contraseña en vez del Dashboard. Persiste en
+   * SecureStore (no solo aquí) para que sobreviva a un reinicio de la app antes de
+   * completar el cambio; `App.tsx` lo rehidrata en el arranque vía `checkLocalState`.
+   */
+  debeCambiarPassword: boolean;
 
   // Acciones
   setEnrolled: (token: string) => void;
-  setLoggedIn: (token: string, userId: number, nombreCompleto: string) => void;
-  
+  setLoggedIn: (
+    token: string,
+    userId: number,
+    nombreCompleto: string,
+    debeCambiarPassword?: boolean
+  ) => void;
+
   // Esta es la función que tu App.tsx necesita para arrancar:
   checkLocalState: (
-    enrolled: boolean, 
-    dToken: string | null, 
-    loggedIn: boolean, 
-    uToken: string | null, 
+    enrolled: boolean,
+    dToken: string | null,
+    loggedIn: boolean,
+    uToken: string | null,
     uId: number | null,
-    unombreCompleto: string | null
-  ) => void;  
+    unombreCompleto: string | null,
+    debeCambiarPassword?: boolean
+  ) => void;
+
+  /** Se invoca tras un cambio de contraseña exitoso para liberar el gate. */
+  limpiarCambioPassword: () => void;
 
   logout: () => void;
   wipeData: () => void;
@@ -37,34 +53,40 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       userId: null,
       nombreCompleto: null,
+      debeCambiarPassword: false,
 
-      setEnrolled: (token) => set({ 
-        isEnrolled: true, 
-        deviceToken: token 
+      setEnrolled: (token) => set({
+        isEnrolled: true,
+        deviceToken: token
       }),
 
-      setLoggedIn: (token, userId, nombreCompleto) => set({ 
-        isLoggedIn: true, 
-        token: token, 
+      setLoggedIn: (token, userId, nombreCompleto, debeCambiarPassword = false) => set({
+        isLoggedIn: true,
+        token: token,
         userId: userId,
         nombreCompleto: nombreCompleto || 'Colaborador',
+        debeCambiarPassword,
       }),
 
       // Sincroniza el estado guardado con el estado de la app al iniciar
-      checkLocalState: (enrolled, dToken, loggedIn, uToken, uId, unombreCompleto) => set({
+      checkLocalState: (enrolled, dToken, loggedIn, uToken, uId, unombreCompleto, debeCambiarPassword = false) => set({
         isEnrolled: enrolled,
         deviceToken: dToken,
         isLoggedIn: loggedIn,
         token: uToken,
         userId: uId,
-        nombreCompleto: unombreCompleto
+        nombreCompleto: unombreCompleto,
+        debeCambiarPassword,
       }),
+
+      limpiarCambioPassword: () => set({ debeCambiarPassword: false }),
 
       logout: () => set({
         isLoggedIn: false,
         token: null,
         userId: null,
-        nombreCompleto: null
+        nombreCompleto: null,
+        debeCambiarPassword: false
       }),
 
       wipeData: () => set({
@@ -73,7 +95,8 @@ export const useAuthStore = create<AuthState>()(
         isLoggedIn: false,
         token: null,
         userId: null,
-        nombreCompleto: null
+        nombreCompleto: null,
+        debeCambiarPassword: false
       }),
     }),
     {

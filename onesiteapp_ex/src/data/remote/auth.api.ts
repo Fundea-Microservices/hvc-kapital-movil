@@ -37,6 +37,19 @@ export interface LoginResponse {
   nombrecompleto: string; // El backend devuelve el nombre aquí (minúsculas), no en /auth/permisos
   id_rol: number;
   estado?: number;
+  /**
+   * Bandera de primer ingreso: cuando es `true` la app debe forzar la pantalla de
+   * cambio de contraseña antes de dejar entrar al Dashboard. Es opcional para no
+   * romper con backends antiguos que aún no la devuelven (se trata como `false`).
+   */
+  requiereCambioPassword?: boolean;
+}
+
+// --- cambio obligatorio de contraseña (primer ingreso) ---
+export interface CambiarPasswordPayload {
+  passwordActual: string;
+  passwordNueva: string;
+  confirmarPassword: string;
 }
 
 export interface TokenPayload {
@@ -93,6 +106,21 @@ export const refreshTokenApi = async (data: TokenPayload): Promise<{ token_sesio
 // Le pasamos el token directamente para asegurar que lo envíe al instante después del login
 export const getPermisosApi = async (token: string): Promise<PermisosResponse> => {
   const response = await apiClient.get<PermisosResponse>('/auth/permisos', {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+  return response.data;
+};
+
+// 5. Cambiar contraseña (primer ingreso). Operación ONLINE directa: no viaja en el
+// sync. Se pasa el token explícito —igual que getPermisosApi— porque puede llamarse
+// inmediatamente después del login, antes de que el interceptor lo tenga cacheado.
+export const cambiarPasswordApi = async (
+  data: CambiarPasswordPayload,
+  token: string
+): Promise<{ message: string }> => {
+  const response = await apiClient.post<{ message: string }>('/auth/change-password', data, {
     headers: {
       Authorization: `Bearer ${token}`
     }

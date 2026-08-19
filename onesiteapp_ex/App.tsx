@@ -10,7 +10,8 @@ import "./global.css";
 
 import { EnrollmentScreen } from './src/presentation/screens/Enrollment/EnrollmentScreen';
 import { LoginScreen } from './src/presentation/screens/Login/LoginScreen';
-import { useAuthStore } from './src/presentation/store/useAuthStore'; 
+import { CambioPasswordScreen } from './src/presentation/screens/CambioPassword/CambioPasswordScreen';
+import { useAuthStore } from './src/presentation/store/useAuthStore';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { DashboardScreen } from './src/presentation/screens/Dashboard/DashboardScreen';
@@ -54,7 +55,7 @@ const instalarCapturaGlobal = (): void => {
 instalarCapturaGlobal();
 
 export default function App() {
-  const { isLoggedIn, isEnrolled, checkLocalState } = useAuthStore();
+  const { isLoggedIn, isEnrolled, debeCambiarPassword, checkLocalState } = useAuthStore();
   const [isLoading, setIsLoading] = useState(false); // Ponlo en true si tu lógica de carga inicial es pesada
 
   useEffect(() => {
@@ -72,14 +73,18 @@ export default function App() {
         const isUserLoggedIn = !!sessionToken;
         const userId = userIdRaw ? parseInt(userIdRaw, 10) : null;
         const userName = await SecureStore.getItemAsync('user_name');
+        // Bandera de primer ingreso persistida: si el usuario cerró la app tras el login
+        // pero antes de cambiar la contraseña, aquí se recupera para volver a forzar el gate.
+        const debeCambiar = (await SecureStore.getItemAsync('requiere_cambio_password')) === 'true';
 
         checkLocalState(
-          isAppEnrolled, 
-          deviceToken, 
-          isUserLoggedIn, 
-          sessionToken, 
+          isAppEnrolled,
+          deviceToken,
+          isUserLoggedIn,
+          sessionToken,
           userId,
-          userName
+          userName,
+          debeCambiar
         );
 
       } catch (error) {
@@ -119,6 +124,13 @@ export default function App() {
             // FLUJO 2: Autenticación
             <Stack.Group>
               <Stack.Screen name="Login" component={LoginScreen} />
+            </Stack.Group>
+          ) : debeCambiarPassword ? (
+            // FLUJO 2.B: Cambio obligatorio de contraseña (primer ingreso).
+            // Se intercala entre el login y el Dashboard: mientras la bandera siga activa,
+            // esta es la ÚNICA pantalla accesible, bloqueando el acceso al menú principal.
+            <Stack.Group>
+              <Stack.Screen name="CambioPassword" component={CambioPasswordScreen} />
             </Stack.Group>
           ) : (
             // FLUJO 3: App Principal (Agrupadas sin Fragmentos puros)

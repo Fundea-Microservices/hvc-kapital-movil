@@ -25,6 +25,8 @@ export const useLogout = () => {
       await SecureStore.deleteItemAsync('user_id');
       await SecureStore.deleteItemAsync('user_name');
       await SecureStore.deleteItemAsync('nombre_completo');
+      // Bandera de primer ingreso: es per-usuario, se limpia con el resto de su identidad.
+      await SecureStore.deleteItemAsync('requiere_cambio_password');
       // NOTA: NO borramos 'deviceToken', 'isEnrolled' ni 'company_name' (son del equipo, no del usuario).
 
       // 4. Reset del estado de la UI

@@ -37,6 +37,12 @@ export const LoginScreen = () => {
         await SecureStore.setItemAsync('user_id', String(data.user_id)) //debeir como String
         await SecureStore.setItemAsync('user_name', username.trim()); // Handle de login para mostrarlo en el Dashboard
 
+        // Bandera de primer ingreso. Se persiste en SecureStore para que sobreviva a un
+        // reinicio antes de cambiar la contraseña: App.tsx la rehidrata al arrancar y el
+        // gate vuelve a forzar el cambio en lugar de dejar entrar al Dashboard.
+        const debeCambiarPassword = !!data.requiereCambioPassword;
+        await SecureStore.setItemAsync('requiere_cambio_password', String(debeCambiarPassword));
+
         // 2. Obtener perfil completo del servidor (NestJS)
         const perfilServidor = await getPermisosApi(data.token_sesion);
         // El nombre viene en la respuesta de LOGIN (data.nombrecompleto), no en /auth/permisos.
@@ -58,9 +64,10 @@ export const LoginScreen = () => {
         });
 
         // 4. ÉXITO: Cambiamos estado global y cerramos modal
-        // Importante: setLoggedIn dispara el re-renderizado de App.tsx para ir al Dashboard
+        // Importante: setLoggedIn dispara el re-renderizado de App.tsx. Si debeCambiarPassword
+        // es true, el gate muestra la pantalla de cambio de contraseña, NO el Dashboard.
         setModalState('none');
-        setLoggedIn(data.token_sesion, data.user_id, nombreParaMostrar);
+        setLoggedIn(data.token_sesion, data.user_id, nombreParaMostrar, debeCambiarPassword);
 
         // 5. SINCRONIZACIÓN: En segundo plano.
         // NO encadenar sincronizarCatalogos() aquí: runFullSync() ya lo ejecuta y,
