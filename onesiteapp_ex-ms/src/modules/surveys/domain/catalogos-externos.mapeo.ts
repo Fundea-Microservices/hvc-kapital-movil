@@ -45,14 +45,22 @@ export const MAPEO_POR_DEFECTO: MapeoRespuestaExterna = {
   rutaDatos: ['data', 'catalogos'],
   clavesHijos: ['hijos', 'children'],
   camposCodigo: ['valorCore', 'codigo', 'id', 'value', 'clave', 'codigoOpcion'],
-  camposEtiqueta: ['nombre', 'descripcion', 'valor', 'label', 'text', 'nombreCorto'],
+  camposEtiqueta: [
+    'nombre',
+    'descripcion',
+    'valor',
+    'label',
+    'text',
+    'nombreCorto',
+  ],
   campoActivo: 'activo',
   campoOrden: 'orden',
   ordenarAlfabetico: true,
 };
 
 /** Lista de alternativas separadas por coma (ej. nombres de campo a probar en orden). */
-const dividirLista = (valor: string | undefined): string[] | null => dividirPor(valor, ',');
+const dividirLista = (valor: string | undefined): string[] | null =>
+  dividirPor(valor, ',');
 
 /**
  * Ruta jerárquica separada por PUNTO (ej. `data.catalogos` -> ['data','catalogos']).
@@ -63,9 +71,13 @@ const dividirLista = (valor: string | undefined): string[] | null => dividirPor(
  * un respaldo tolerante que prueba `data.{catalogos,resultado,items}` a mano: la API
  * real funcionaba y la variable de entorno no hacía absolutamente nada.
  */
-const dividirRuta = (valor: string | undefined): string[] | null => dividirPor(valor, '.');
+const dividirRuta = (valor: string | undefined): string[] | null =>
+  dividirPor(valor, '.');
 
-const dividirPor = (valor: string | undefined, separador: string): string[] | null => {
+const dividirPor = (
+  valor: string | undefined,
+  separador: string,
+): string[] | null => {
   if (valor === undefined) return null;
   const partes = valor
     .split(separador)
@@ -80,11 +92,15 @@ const dividirPor = (valor: string | undefined, separador: string): string[] | nu
  * Nest para que sea testeable con Node plano. Cualquier variable ausente cae al
  * valor por defecto correspondiente — nunca falla por configuración incompleta.
  */
-export function mapeoDesdeEntorno(leer: (clave: string) => string | undefined): MapeoRespuestaExterna {
+export function mapeoDesdeEntorno(
+  leer: (clave: string) => string | undefined,
+): MapeoRespuestaExterna {
   const rutaDatos = dividirRuta(leer('API_CATALOGOS_EXT_RUTA_DATOS'));
   const clavesHijos = dividirLista(leer('API_CATALOGOS_EXT_CLAVES_HIJOS'));
   const camposCodigo = dividirLista(leer('API_CATALOGOS_EXT_CAMPOS_CODIGO'));
-  const camposEtiqueta = dividirLista(leer('API_CATALOGOS_EXT_CAMPOS_ETIQUETA'));
+  const camposEtiqueta = dividirLista(
+    leer('API_CATALOGOS_EXT_CAMPOS_ETIQUETA'),
+  );
   const campoActivoRaw = leer('API_CATALOGOS_EXT_CAMPO_ACTIVO');
   const campoOrdenRaw = leer('API_CATALOGOS_EXT_CAMPO_ORDEN');
   const ordenarAlfabeticoRaw = leer('API_CATALOGOS_EXT_ORDENAR_ALFABETICO');
@@ -94,8 +110,14 @@ export function mapeoDesdeEntorno(leer: (clave: string) => string | undefined): 
     clavesHijos: clavesHijos ?? MAPEO_POR_DEFECTO.clavesHijos,
     camposCodigo: camposCodigo ?? MAPEO_POR_DEFECTO.camposCodigo,
     camposEtiqueta: camposEtiqueta ?? MAPEO_POR_DEFECTO.camposEtiqueta,
-    campoActivo: campoActivoRaw !== undefined ? (campoActivoRaw || null) : MAPEO_POR_DEFECTO.campoActivo,
-    campoOrden: campoOrdenRaw !== undefined ? (campoOrdenRaw || null) : MAPEO_POR_DEFECTO.campoOrden,
+    campoActivo:
+      campoActivoRaw !== undefined
+        ? campoActivoRaw || null
+        : MAPEO_POR_DEFECTO.campoActivo,
+    campoOrden:
+      campoOrdenRaw !== undefined
+        ? campoOrdenRaw || null
+        : MAPEO_POR_DEFECTO.campoOrden,
     ordenarAlfabetico:
       ordenarAlfabeticoRaw !== undefined
         ? ordenarAlfabeticoRaw.trim().toLowerCase() !== 'false'
@@ -114,7 +136,10 @@ function leerRuta(obj: unknown, ruta: string[]): unknown {
 }
 
 /** Primer valor de `objeto[clave]` (para cualquiera de las `claves`) que sea un arreglo. */
-function primerArreglo(objeto: Record<string, unknown>, claves: string[]): unknown[] | null {
+function primerArreglo(
+  objeto: Record<string, unknown>,
+  claves: string[],
+): unknown[] | null {
   for (const clave of claves) {
     const valor = objeto[clave];
     if (Array.isArray(valor)) return valor;
@@ -134,7 +159,10 @@ function primerArreglo(objeto: Record<string, unknown>, claves: string[]): unkno
  * correspondiente, para no mezclar dos catálogos bajo el mismo nombre
  * sintético "API_<IdPregunta>".
  */
-export function extraerFilas(cuerpo: unknown, mapeo: MapeoRespuestaExterna): unknown[] {
+export function extraerFilas(
+  cuerpo: unknown,
+  mapeo: MapeoRespuestaExterna,
+): unknown[] {
   if (Array.isArray(cuerpo)) return cuerpo;
   if (!cuerpo || typeof cuerpo !== 'object') return [];
 
@@ -149,7 +177,11 @@ export function extraerFilas(cuerpo: unknown, mapeo: MapeoRespuestaExterna): unk
   if (directo) return directo;
 
   if (obj.data && typeof obj.data === 'object') {
-    const anidado = primerArreglo(obj.data as Record<string, unknown>, ['catalogos', 'resultado', 'items']);
+    const anidado = primerArreglo(obj.data as Record<string, unknown>, [
+      'catalogos',
+      'resultado',
+      'items',
+    ]);
     if (anidado) return desenvolverHijos(anidado, mapeo.clavesHijos);
   }
 
@@ -162,8 +194,8 @@ function desenvolverHijos(nodos: unknown[], clavesHijos: string[]): unknown[] {
   const primero = nodos[0];
   if (typeof primero !== 'object' || primero === null) return nodos;
 
-  const tieneHijos = clavesHijos.some(
-    (clave) => Array.isArray((primero as Record<string, unknown>)[clave]),
+  const tieneHijos = clavesHijos.some((clave) =>
+    Array.isArray((primero as Record<string, unknown>)[clave]),
   );
   if (!tieneHijos) return nodos;
 
@@ -176,40 +208,68 @@ function desenvolverHijos(nodos: unknown[], clavesHijos: string[]): unknown[] {
 }
 
 /** true si el campo de actividad indica explícitamente inactivo; ausente = activo. */
-function esInactivo(fila: Record<string, unknown>, campoActivo: string | null): boolean {
+function esInactivo(
+  fila: Record<string, unknown>,
+  campoActivo: string | null,
+): boolean {
   if (!campoActivo) return false;
   if (!(campoActivo in fila)) return false; // sin el campo, se asume activo
   const valor = fila[campoActivo];
-  return valor === false || valor === 0 || valor === 'false' || valor === '0' || valor === 'no';
+  return (
+    valor === false ||
+    valor === 0 ||
+    valor === 'false' ||
+    valor === '0' ||
+    valor === 'no'
+  );
 }
 
 /** Normaliza una fila cruda a { codigo, etiqueta, orden }, o null si falta código/etiqueta. */
-export function normalizarFilaExterna(fila: unknown, mapeo: MapeoRespuestaExterna): OpcionExterna | null {
+export function normalizarFilaExterna(
+  fila: unknown,
+  mapeo: MapeoRespuestaExterna,
+): OpcionExterna | null {
   if (typeof fila !== 'object' || fila === null) return null;
   const f = fila as Record<string, unknown>;
 
   if (esInactivo(f, mapeo.campoActivo)) return null;
 
-  const codigo = mapeo.camposCodigo.map((c) => f[c]).find((v) => v !== undefined && v !== null);
-  const etiqueta = mapeo.camposEtiqueta.map((c) => f[c]).find((v) => v !== undefined && v !== null);
+  const codigo = mapeo.camposCodigo
+    .map((c) => f[c])
+    .find((v) => v !== undefined && v !== null);
+  const etiqueta = mapeo.camposEtiqueta
+    .map((c) => f[c])
+    .find((v) => v !== undefined && v !== null);
   if (codigo === undefined || etiqueta === undefined) return null;
 
   const ordenCrudo = mapeo.campoOrden ? f[mapeo.campoOrden] : undefined;
-  const orden = typeof ordenCrudo === 'number' && Number.isFinite(ordenCrudo) ? ordenCrudo : 0;
+  const orden =
+    typeof ordenCrudo === 'number' && Number.isFinite(ordenCrudo)
+      ? ordenCrudo
+      : 0;
 
   return { codigo: String(codigo), etiqueta: String(etiqueta), orden };
 }
 
-export function ordenarOpciones(opciones: OpcionExterna[], mapeo: MapeoRespuestaExterna): OpcionExterna[] {
+export function ordenarOpciones(
+  opciones: OpcionExterna[],
+  mapeo: MapeoRespuestaExterna,
+): OpcionExterna[] {
   return opciones.slice().sort((a, b) => {
     if (a.orden !== b.orden) return a.orden - b.orden;
     if (!mapeo.ordenarAlfabetico) return 0;
-    return a.etiqueta.localeCompare(b.etiqueta, 'es', { sensitivity: 'base', numeric: true });
+    return a.etiqueta.localeCompare(b.etiqueta, 'es', {
+      sensitivity: 'base',
+      numeric: true,
+    });
   });
 }
 
 /** extraerFilas -> normalizar (descarta inválidas/inactivas) -> ordenar. Única función que llama el servicio. */
-export function normalizarRespuesta(cuerpo: unknown, mapeo: MapeoRespuestaExterna): OpcionExterna[] {
+export function normalizarRespuesta(
+  cuerpo: unknown,
+  mapeo: MapeoRespuestaExterna,
+): OpcionExterna[] {
   const filas = extraerFilas(cuerpo, mapeo);
   const opciones = filas
     .map((f) => normalizarFilaExterna(f, mapeo))

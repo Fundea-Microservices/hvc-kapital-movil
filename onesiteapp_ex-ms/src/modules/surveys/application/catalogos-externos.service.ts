@@ -100,11 +100,18 @@ export class CatalogosExternosService {
     if (this.diagnosticoActivo()) {
       this.logger.debug(
         `Preguntas API encontradas: ${filas.length} -> ` +
-          filas.map((f) => `#${f.IdPregunta} cmd="${f.OrigenDatosCmd ?? ''}"`).join(' | '),
+          filas
+            .map((f) => `#${f.IdPregunta} cmd="${f.OrigenDatosCmd ?? ''}"`)
+            .join(' | '),
       );
       this.logger.debug(
         `Plan: ${plan.length} (raíz=${raiz.length}, dependientes=${dependientes.length}) -> ` +
-          plan.map((p) => `#${p.idPregunta} ${p.esDependiente ? 'DEP' : 'RAIZ'} ${p.url}`).join(' | '),
+          plan
+            .map(
+              (p) =>
+                `#${p.idPregunta} ${p.esDependiente ? 'DEP' : 'RAIZ'} ${p.url}`,
+            )
+            .join(' | '),
       );
     }
 
@@ -116,7 +123,10 @@ export class CatalogosExternosService {
     for (const p of raiz) {
       try {
         const opciones = await this.llamarApiExterna(p.url, mapeo);
-        codigosPorPregunta.set(p.idPregunta, opciones.map((o) => o.codigo));
+        codigosPorPregunta.set(
+          p.idPregunta,
+          opciones.map((o) => o.codigo),
+        );
         for (const opcion of opciones) {
           resultado.push(this.aOpcionCatalogo(p.idPregunta, opcion, null));
         }
@@ -130,7 +140,9 @@ export class CatalogosExternosService {
           );
         }
       } catch (e) {
-        this.logger.warn(`Falló la pregunta raíz ${p.idPregunta}: ${this.mensajeError(e)}`);
+        this.logger.warn(
+          `Falló la pregunta raíz ${p.idPregunta}: ${this.mensajeError(e)}`,
+        );
       }
     }
 
@@ -145,11 +157,16 @@ export class CatalogosExternosService {
       }
       const codigosPadre = codigosPorPregunta.get(idPadre) || [];
       if (codigosPadre.length === 0) {
-        this.logger.warn(`Pregunta padre ${idPadre} de ${p.idPregunta} no tiene códigos (¿falló su llamada?); se omite.`);
+        this.logger.warn(
+          `Pregunta padre ${idPadre} de ${p.idPregunta} no tiene códigos (¿falló su llamada?); se omite.`,
+        );
         continue;
       }
 
-      const concurrencia = this.numeroEntorno('API_CATALOGOS_EXT_CONCURRENCIA', 4);
+      const concurrencia = this.numeroEntorno(
+        'API_CATALOGOS_EXT_CONCURRENCIA',
+        4,
+      );
       for (let i = 0; i < codigosPadre.length; i += concurrencia) {
         const lote = codigosPadre.slice(i, i + concurrencia);
         const resultadosLote = await Promise.all(
@@ -159,14 +176,18 @@ export class CatalogosExternosService {
               const opciones = await this.llamarApiExterna(url, mapeo);
               return { codigoPadre, opciones };
             } catch (e) {
-              this.logger.warn(`Falló ${p.idPregunta} para padre=${codigoPadre}: ${this.mensajeError(e)}`);
+              this.logger.warn(
+                `Falló ${p.idPregunta} para padre=${codigoPadre}: ${this.mensajeError(e)}`,
+              );
               return { codigoPadre, opciones: [] as OpcionExterna[] };
             }
           }),
         );
         for (const { codigoPadre, opciones } of resultadosLote) {
           for (const opcion of opciones) {
-            resultado.push(this.aOpcionCatalogo(p.idPregunta, opcion, codigoPadre));
+            resultado.push(
+              this.aOpcionCatalogo(p.idPregunta, opcion, codigoPadre),
+            );
           }
         }
       }
@@ -186,10 +207,18 @@ export class CatalogosExternosService {
   }
 
   private diagnosticoActivo(): boolean {
-    return this.configService.get<string>('API_CATALOGOS_EXT_DIAGNOSTICO', 'false').toLowerCase() === 'true';
+    return (
+      this.configService
+        .get<string>('API_CATALOGOS_EXT_DIAGNOSTICO', 'false')
+        .toLowerCase() === 'true'
+    );
   }
 
-  private aOpcionCatalogo(idPregunta: number, opcion: OpcionExterna, idPadreOpcion: string | null): OpcionCatalogoExterno {
+  private aOpcionCatalogo(
+    idPregunta: number,
+    opcion: OpcionExterna,
+    idPadreOpcion: string | null,
+  ): OpcionCatalogoExterno {
     return {
       id_remoto: opcion.codigo,
       nombre_catalogo: `API_${idPregunta}`,
@@ -246,7 +275,8 @@ export class CatalogosExternosService {
    */
   private resolverOrigen(origenDatosCmd: string | null): ResolucionOrigen {
     const valor = (origenDatosCmd ?? '').trim();
-    if (!valor) return { tipo: 'sin-resolver', clave: '', variablesProbadas: [] };
+    if (!valor)
+      return { tipo: 'sin-resolver', clave: '', variablesProbadas: [] };
 
     if (esUrlAbsoluta(valor)) {
       return { tipo: 'url', url: valor, variable: null, legado: true };
@@ -254,7 +284,12 @@ export class CatalogosExternosService {
 
     if (esRutaRelativa(valor)) {
       const base = this.configService.get<string>('API_CATALOGOS_EXT_URL', '');
-      return { tipo: 'url', url: `${base}${valor}`, variable: 'API_CATALOGOS_EXT_URL', legado: false };
+      return {
+        tipo: 'url',
+        url: `${base}${valor}`,
+        variable: 'API_CATALOGOS_EXT_URL',
+        legado: false,
+      };
     }
 
     const variables = nombresVariableUrl(valor);
@@ -271,7 +306,9 @@ export class CatalogosExternosService {
    * lo cual no es JSON válido — se sanea antes de parsear y se acepta tanto el token
    * como un id numérico crudo.
    */
-  private resolverIdPreguntaPadre(reglaVisibilidad: string | null): number | null {
+  private resolverIdPreguntaPadre(
+    reglaVisibilidad: string | null,
+  ): number | null {
     if (!reglaVisibilidad) return null;
     try {
       const saneada = reglaVisibilidad.replace(/:(\s*)Q(\d+)\b/gi, ':$1"Q$2"');
@@ -290,10 +327,19 @@ export class CatalogosExternosService {
    * reintenta solo fallos de red/timeout (nunca 4xx) y devuelve las opciones ya
    * normalizadas según el mapeo activo.
    */
-  private async llamarApiExterna(url: string, mapeo: MapeoRespuestaExterna): Promise<OpcionExterna[]> {
+  private async llamarApiExterna(
+    url: string,
+    mapeo: MapeoRespuestaExterna,
+  ): Promise<OpcionExterna[]> {
     const token = this.configService.get<string>('API_CATALOGOS_EXT_TOKEN', '');
-    const headerAuth = this.configService.get<string>('API_CATALOGOS_EXT_AUTH_HEADER', 'Authorization');
-    const prefijoAuth = this.configService.get<string>('API_CATALOGOS_EXT_AUTH_PREFIJO', 'Bearer');
+    const headerAuth = this.configService.get<string>(
+      'API_CATALOGOS_EXT_AUTH_HEADER',
+      'Authorization',
+    );
+    const prefijoAuth = this.configService.get<string>(
+      'API_CATALOGOS_EXT_AUTH_PREFIJO',
+      'Bearer',
+    );
     const timeoutMs = this.numeroEntorno('API_CATALOGOS_EXT_TIMEOUT_MS', 8000);
     const reintentos = this.numeroEntorno('API_CATALOGOS_EXT_REINTENTOS', 1);
     const diagnostico = this.diagnosticoActivo();
@@ -306,29 +352,41 @@ export class CatalogosExternosService {
     let ultimoError: unknown;
     for (let intento = 0; intento <= reintentos; intento += 1) {
       try {
-        const respuesta = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
+        const respuesta = await fetch(url, {
+          headers,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
         if (!respuesta.ok) {
           throw new Error(`HTTP ${respuesta.status} en ${url}`);
         }
         const cuerpo: unknown = await respuesta.json();
 
         if (diagnostico) {
-          this.logger.debug(`${url} -> ${JSON.stringify(cuerpo).slice(0, 500)}`);
+          this.logger.debug(
+            `${url} -> ${JSON.stringify(cuerpo).slice(0, 500)}`,
+          );
         }
 
         return normalizarRespuesta(cuerpo, mapeo);
       } catch (e) {
-        ultimoError = this.esTimeout(e) ? new Error(`Timeout de ${timeoutMs}ms en ${url}`) : e;
+        ultimoError = this.esTimeout(e)
+          ? new Error(`Timeout de ${timeoutMs}ms en ${url}`)
+          : e;
         // Los 4xx no mejoran reintentando; el resto (red/timeout) sí.
         if (e instanceof Error && /^HTTP 4\d\d/.test(e.message)) break;
         if (intento < reintentos) await this.esperar(300);
       }
     }
-    throw ultimoError instanceof Error ? ultimoError : new Error(String(ultimoError));
+    throw ultimoError instanceof Error
+      ? ultimoError
+      : new Error(String(ultimoError));
   }
 
   private esTimeout(e: unknown): boolean {
-    return e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError');
+    return (
+      e instanceof Error &&
+      (e.name === 'TimeoutError' || e.name === 'AbortError')
+    );
   }
 
   private esperar(ms: number): Promise<void> {

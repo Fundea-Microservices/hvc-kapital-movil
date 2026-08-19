@@ -20,7 +20,9 @@ const SUFIJO_VARIABLE_URL = '_URL';
  * sin `_` en los bordes. Determinista: la misma clave siempre normaliza igual,
  * sin importar mayúsculas/espacios/acentos que use el BackOffice.
  */
-export function normalizarClaveCatalogo(clave: string | null | undefined): string {
+export function normalizarClaveCatalogo(
+  clave: string | null | undefined,
+): string {
   if (!clave) return '';
   return clave
     .normalize('NFD')
@@ -56,7 +58,9 @@ export function variantesClave(claveNormalizada: string): string[] {
   }
   if (!terminaEnS) {
     // Singular -> plural: vocal final + S, consonante final + ES.
-    variantes.push(terminaEnVocal ? `${claveNormalizada}S` : `${claveNormalizada}ES`);
+    variantes.push(
+      terminaEnVocal ? `${claveNormalizada}S` : `${claveNormalizada}ES`,
+    );
   }
 
   // De-duplicar preservando el orden (el exacto siempre primero).
@@ -67,7 +71,9 @@ export function variantesClave(claveNormalizada: string): string[] {
 export function nombresVariableUrl(clave: string): string[] {
   const normalizada = normalizarClaveCatalogo(clave);
   if (!normalizada) return [];
-  return variantesClave(normalizada).map((v) => `${PREFIJO_VARIABLE_URL}${v}${SUFIJO_VARIABLE_URL}`);
+  return variantesClave(normalizada).map(
+    (v) => `${PREFIJO_VARIABLE_URL}${v}${SUFIJO_VARIABLE_URL}`,
+  );
 }
 
 export function esUrlAbsoluta(valor: string): boolean {

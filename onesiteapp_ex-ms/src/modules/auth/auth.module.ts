@@ -14,9 +14,9 @@ import { AuthController } from './infrastructure/auth.controller';
       inject: [ConfigService],
       useFactory: async (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { 
+        signOptions: {
           // Hacemos un bypass al tipado estricto con "as any"
-          expiresIn: configService.get<string>('JWT_ACCESS_EXPIRATION') as any
+          expiresIn: configService.get<string>('JWT_ACCESS_EXPIRATION') as any,
         },
       }),
     }),

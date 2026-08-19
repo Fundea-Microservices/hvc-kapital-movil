@@ -17,11 +17,20 @@ import { ConfigService } from '@nestjs/config';
 import { memoryStorage } from 'multer';
 import type { Response } from 'express';
 
-import { MultimediaService, PeticionSubida, RespuestaSubida } from '../application/multimedia.service';
+import {
+  MultimediaService,
+  PeticionSubida,
+  RespuestaSubida,
+} from '../application/multimedia.service';
 import { MultimediaStorageService } from '../application/multimedia-storage.service';
 import { TipoMedio } from '../domain/multimedia.politicas';
 
-const TIPOS_VALIDOS: readonly TipoMedio[] = ['FOTO', 'MULTIMEDIA', 'DOCUMENTO', 'FIRMA'];
+const TIPOS_VALIDOS: readonly TipoMedio[] = [
+  'FOTO',
+  'MULTIMEDIA',
+  'DOCUMENTO',
+  'FIRMA',
+];
 
 /** Contrato de respuesta del endpoint de subida. */
 interface RespuestaEndpoint extends RespuestaSubida {
@@ -83,7 +92,8 @@ export class MultimediaController {
     @Headers('x-device-token') deviceToken: string,
     @Headers('x-user-id') userId: string,
   ): Promise<RespuestaEndpoint> {
-    if (!deviceToken) throw new UnauthorizedException('Dispositivo no autenticado');
+    if (!deviceToken)
+      throw new UnauthorizedException('Dispositivo no autenticado');
     if (!archivo) throw new BadRequestException('No se recibió ningún archivo');
 
     const idUsuario = Number(userId);
@@ -92,7 +102,11 @@ export class MultimediaController {
     }
 
     const peticion = this.construirPeticion(campos ?? {}, archivo);
-    const resultado = await this.multimediaService.subir(peticion, archivo.buffer, idUsuario);
+    const resultado = await this.multimediaService.subir(
+      peticion,
+      archivo.buffer,
+      idUsuario,
+    );
 
     return { success: true, ...resultado };
   }
@@ -112,10 +126,13 @@ export class MultimediaController {
     @Headers('x-device-token') deviceToken: string,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
-    if (!deviceToken) throw new UnauthorizedException('Dispositivo no autenticado');
+    if (!deviceToken)
+      throw new UnauthorizedException('Dispositivo no autenticado');
 
     const fila = await this.multimediaService.obtenerParaDescarga(id);
-    const { stream, tamanioBytes } = await this.storage.abrir(fila.RutaRelativa);
+    const { stream, tamanioBytes } = await this.storage.abrir(
+      fila.RutaRelativa,
+    );
 
     res.set({
       'Content-Type': fila.MimeType || 'application/octet-stream',
@@ -144,9 +161,13 @@ export class MultimediaController {
       throw new BadRequestException('idPregunta ausente o inválido');
     }
 
-    const tipoMedio = (campos.tipoMedio || '').trim().toUpperCase() as TipoMedio;
+    const tipoMedio = (campos.tipoMedio || '')
+      .trim()
+      .toUpperCase() as TipoMedio;
     if (!TIPOS_VALIDOS.includes(tipoMedio)) {
-      throw new BadRequestException(`tipoMedio inválido: "${campos.tipoMedio}"`);
+      throw new BadRequestException(
+        `tipoMedio inválido: "${campos.tipoMedio}"`,
+      );
     }
 
     const secuencia = Number(campos.secuencia || 1);

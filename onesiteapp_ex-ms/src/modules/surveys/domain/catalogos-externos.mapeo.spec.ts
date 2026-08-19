@@ -75,8 +75,22 @@ const RESPUESTA_MUNICIPIOS_REAL = {
         padreId: '57D92E70-87AE-456A-BA65-AE086286D500',
         padre: { grupo: 'pais', nombre: 'GUATEMALA', valorCore: '320' },
         hijos: [
-          { grupo: 'municipio', nombre: 'PATZICÍA', valorCore: '126', padreValorCore: '11', activo: true, orden: 0 },
-          { grupo: 'municipio', nombre: 'ZARAGOZA', valorCore: '132', padreValorCore: '11', activo: true, orden: 0 },
+          {
+            grupo: 'municipio',
+            nombre: 'PATZICÍA',
+            valorCore: '126',
+            padreValorCore: '11',
+            activo: true,
+            orden: 0,
+          },
+          {
+            grupo: 'municipio',
+            nombre: 'ZARAGOZA',
+            valorCore: '132',
+            padreValorCore: '11',
+            activo: true,
+            orden: 0,
+          },
         ],
       },
     ],
@@ -96,12 +110,18 @@ describe('extraerFilas', () => {
   });
 
   it('acepta un arreglo plano en la raíz', () => {
-    const filas = extraerFilas([{ valorCore: '1', nombre: 'A' }], MAPEO_POR_DEFECTO);
+    const filas = extraerFilas(
+      [{ valorCore: '1', nombre: 'A' }],
+      MAPEO_POR_DEFECTO,
+    );
     expect(filas).toHaveLength(1);
   });
 
   it('acepta envoltura {data: [...]} sin nodo raíz', () => {
-    const filas = extraerFilas({ data: [{ valorCore: '1', nombre: 'A' }] }, MAPEO_POR_DEFECTO);
+    const filas = extraerFilas(
+      { data: [{ valorCore: '1', nombre: 'A' }] },
+      MAPEO_POR_DEFECTO,
+    );
     expect(filas).toHaveLength(1);
   });
 
@@ -140,12 +160,20 @@ describe('normalizarFilaExterna', () => {
 
   it('conserva una fila SIN el campo activo (se asume activa)', () => {
     const fila = { valorCore: '1', nombre: 'X' };
-    expect(normalizarFilaExterna(fila, MAPEO_POR_DEFECTO)).toEqual({ codigo: '1', etiqueta: 'X', orden: 0 });
+    expect(normalizarFilaExterna(fila, MAPEO_POR_DEFECTO)).toEqual({
+      codigo: '1',
+      etiqueta: 'X',
+      orden: 0,
+    });
   });
 
   it('null si falta código o etiqueta', () => {
-    expect(normalizarFilaExterna({ nombre: 'X' }, MAPEO_POR_DEFECTO)).toBeNull();
-    expect(normalizarFilaExterna({ valorCore: '1' }, MAPEO_POR_DEFECTO)).toBeNull();
+    expect(
+      normalizarFilaExterna({ nombre: 'X' }, MAPEO_POR_DEFECTO),
+    ).toBeNull();
+    expect(
+      normalizarFilaExterna({ valorCore: '1' }, MAPEO_POR_DEFECTO),
+    ).toBeNull();
     expect(normalizarFilaExterna('no-es-objeto', MAPEO_POR_DEFECTO)).toBeNull();
   });
 
@@ -164,7 +192,11 @@ describe('ordenarOpciones', () => {
 
   it('con todos en orden=0, desempata alfabéticamente (es-ES, sin distinguir mayúsculas)', () => {
     const resultado = ordenarOpciones(opciones, MAPEO_POR_DEFECTO);
-    expect(resultado.map((o) => o.etiqueta)).toEqual(['ALTA VERAPAZ', 'QUETZALTENANGO', 'RETALHULEU']);
+    expect(resultado.map((o) => o.etiqueta)).toEqual([
+      'ALTA VERAPAZ',
+      'QUETZALTENANGO',
+      'RETALHULEU',
+    ]);
   });
 
   it('el orden numérico significativo manda sobre el alfabético', () => {
@@ -172,19 +204,31 @@ describe('ordenarOpciones', () => {
       { codigo: '1', etiqueta: 'ZETA', orden: 1 },
       { codigo: '2', etiqueta: 'ALFA', orden: 0 },
     ];
-    expect(ordenarOpciones(conOrden, MAPEO_POR_DEFECTO).map((o) => o.etiqueta)).toEqual(['ALFA', 'ZETA']);
+    expect(
+      ordenarOpciones(conOrden, MAPEO_POR_DEFECTO).map((o) => o.etiqueta),
+    ).toEqual(['ALFA', 'ZETA']);
   });
 
   it('ordenarAlfabetico: false conserva el orden de llegada en el desempate', () => {
-    const mapeo: MapeoRespuestaExterna = { ...MAPEO_POR_DEFECTO, ordenarAlfabetico: false };
+    const mapeo: MapeoRespuestaExterna = {
+      ...MAPEO_POR_DEFECTO,
+      ordenarAlfabetico: false,
+    };
     const resultado = ordenarOpciones(opciones, mapeo);
-    expect(resultado.map((o) => o.etiqueta)).toEqual(['RETALHULEU', 'ALTA VERAPAZ', 'QUETZALTENANGO']);
+    expect(resultado.map((o) => o.etiqueta)).toEqual([
+      'RETALHULEU',
+      'ALTA VERAPAZ',
+      'QUETZALTENANGO',
+    ]);
   });
 });
 
 describe('normalizarRespuesta (extraer -> normalizar -> ordenar, punta a punta)', () => {
   it('con el payload real de departamentos, produce 3 opciones ordenadas alfabéticamente', () => {
-    const resultado = normalizarRespuesta(RESPUESTA_DEPARTAMENTOS_REAL, MAPEO_POR_DEFECTO);
+    const resultado = normalizarRespuesta(
+      RESPUESTA_DEPARTAMENTOS_REAL,
+      MAPEO_POR_DEFECTO,
+    );
     expect(resultado).toEqual([
       { codigo: '2', etiqueta: 'ALTA VERAPAZ', orden: 0 },
       { codigo: '14', etiqueta: 'QUETZALTENANGO', orden: 0 },
@@ -193,7 +237,10 @@ describe('normalizarRespuesta (extraer -> normalizar -> ordenar, punta a punta)'
   });
 
   it('con el payload real de municipios, produce las 2 opciones esperadas', () => {
-    const resultado = normalizarRespuesta(RESPUESTA_MUNICIPIOS_REAL, MAPEO_POR_DEFECTO);
+    const resultado = normalizarRespuesta(
+      RESPUESTA_MUNICIPIOS_REAL,
+      MAPEO_POR_DEFECTO,
+    );
     expect(resultado.map((o) => o.etiqueta)).toEqual(['PATZICÍA', 'ZARAGOZA']);
     expect(resultado.map((o) => o.codigo)).toEqual(['126', '132']);
   });
@@ -212,7 +259,9 @@ describe('normalizarRespuesta (extraer -> normalizar -> ordenar, punta a punta)'
         ],
       },
     };
-    expect(normalizarRespuesta(cuerpo, MAPEO_POR_DEFECTO).map((o) => o.etiqueta)).toEqual(['B', 'C']);
+    expect(
+      normalizarRespuesta(cuerpo, MAPEO_POR_DEFECTO).map((o) => o.etiqueta),
+    ).toEqual(['B', 'C']);
   });
 });
 
@@ -228,15 +277,25 @@ describe('mapeoDesdeEntorno', () => {
     // nombre literal, que no existe. El fallo era invisible porque extraerFilas tiene un
     // respaldo que prueba data.{catalogos,resultado,items} a mano: la variable de entorno
     // "funcionaba" sin hacer nada, y no habria servido para otra API.
-    const entorno: Record<string, string> = { API_CATALOGOS_EXT_RUTA_DATOS: 'respuesta.contenido.lista' };
-    expect(mapeoDesdeEntorno((clave) => entorno[clave]).rutaDatos).toEqual(['respuesta', 'contenido', 'lista']);
+    const entorno: Record<string, string> = {
+      API_CATALOGOS_EXT_RUTA_DATOS: 'respuesta.contenido.lista',
+    };
+    expect(mapeoDesdeEntorno((clave) => entorno[clave]).rutaDatos).toEqual([
+      'respuesta',
+      'contenido',
+      'lista',
+    ]);
   });
 
   it('una RUTA_DATOS distinta a la por defecto SI cambia de donde se extraen las filas', () => {
     // Prueba de que la variable ahora es funcional de verdad, no solo que parsea bien.
-    const entorno: Record<string, string> = { API_CATALOGOS_EXT_RUTA_DATOS: 'payload.registros' };
+    const entorno: Record<string, string> = {
+      API_CATALOGOS_EXT_RUTA_DATOS: 'payload.registros',
+    };
     const mapeo = mapeoDesdeEntorno((clave) => entorno[clave]);
-    const cuerpo = { payload: { registros: [{ valorCore: '7', nombre: 'SIETE' }] } };
+    const cuerpo = {
+      payload: { registros: [{ valorCore: '7', nombre: 'SIETE' }] },
+    };
     const opciones = normalizarRespuesta(cuerpo, mapeo);
     expect(opciones).toEqual([{ codigo: '7', etiqueta: 'SIETE', orden: 0 }]);
   });
@@ -261,7 +320,9 @@ describe('mapeoDesdeEntorno', () => {
   });
 
   it('CAMPO_ACTIVO vacío desactiva el filtro de actividad (campoActivo: null)', () => {
-    const mapeo = mapeoDesdeEntorno((clave) => (clave === 'API_CATALOGOS_EXT_CAMPO_ACTIVO' ? '' : undefined));
+    const mapeo = mapeoDesdeEntorno((clave) =>
+      clave === 'API_CATALOGOS_EXT_CAMPO_ACTIVO' ? '' : undefined,
+    );
     expect(mapeo.campoActivo).toBeNull();
   });
 });

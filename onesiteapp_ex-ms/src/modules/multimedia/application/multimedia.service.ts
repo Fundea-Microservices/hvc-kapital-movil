@@ -73,7 +73,10 @@ export class MultimediaService {
    * Devuelve además el `IdEncuesta` REAL leído de la base: el nombre del archivo se
    * construye con él y no con lo que declare el cliente.
    */
-  private async verificarPropiedad(idCaptura: string, idUsuario: number): Promise<FilaCaptura> {
+  private async verificarPropiedad(
+    idCaptura: string,
+    idUsuario: number,
+  ): Promise<FilaCaptura> {
     const filas: FilaCaptura[] = await this.dataSource.query(
       'SELECT IdCaptura, IdEncuesta, IdUsuario FROM appEx_Encabezado_Captura WHERE IdCaptura = @0',
       [idCaptura],
@@ -85,9 +88,11 @@ export class MultimediaService {
     if (Number(captura.IdUsuario) !== Number(idUsuario)) {
       this.logger.warn(
         `IDOR bloqueado: el usuario ${idUsuario} intentó adjuntar a la captura ${idCaptura}, ` +
-        `que pertenece al usuario ${captura.IdUsuario}.`,
+          `que pertenece al usuario ${captura.IdUsuario}.`,
       );
-      throw new ForbiddenException('La captura no pertenece al usuario autenticado');
+      throw new ForbiddenException(
+        'La captura no pertenece al usuario autenticado',
+      );
     }
 
     return captura;
@@ -102,13 +107,20 @@ export class MultimediaService {
    * ciegas que el móvil no sabría interpretar. La garantía DURA sigue siendo el índice
    * único de la tabla, que sobrevive a reinstalaciones y a sincronizaciones solapadas.
    */
-  private async buscarExistente(contexto: ContextoArchivo): Promise<FilaMultimedia | null> {
+  private async buscarExistente(
+    contexto: ContextoArchivo,
+  ): Promise<FilaMultimedia | null> {
     const filas: FilaMultimedia[] = await this.dataSource.query(
       `SELECT TOP 1 IdMultimedia, RutaRelativa, NombreArchivo, NombreOriginal, MimeType, TamanioBytes
          FROM appEx_Multimedia
         WHERE IdCaptura = @0 AND IdPregunta = @1 AND ClaveInstancia = @2 AND Secuencia = @3
           AND Estado = 1`,
-      [contexto.idCaptura, contexto.idPregunta, contexto.claveInstancia ?? '', contexto.secuencia ?? 1],
+      [
+        contexto.idCaptura,
+        contexto.idPregunta,
+        contexto.claveInstancia ?? '',
+        contexto.secuencia ?? 1,
+      ],
     );
     return filas?.[0] ?? null;
   }
@@ -118,7 +130,10 @@ export class MultimediaService {
     buffer: Buffer,
     idUsuario: number,
   ): Promise<RespuestaSubida> {
-    const captura = await this.verificarPropiedad(peticion.idCaptura, idUsuario);
+    const captura = await this.verificarPropiedad(
+      peticion.idCaptura,
+      idUsuario,
+    );
 
     const contexto: ContextoArchivo = {
       // IdEncuesta sale de la BD, NO del cliente: el nombre del archivo se construye
@@ -164,9 +179,14 @@ export class MultimediaService {
                 MimeType = @4, TamanioBytes = @5, HashSha256 = @6, FechaSubida = GETDATE()
           WHERE IdMultimedia = @7`,
         [
-          guardado.rutaRelativa, guardado.nombreArchivo, peticion.nombreOriginal ?? null,
-          guardado.extension, peticion.mimeType ?? null, guardado.tamanioBytes,
-          guardado.hashSha256, existente.IdMultimedia,
+          guardado.rutaRelativa,
+          guardado.nombreArchivo,
+          peticion.nombreOriginal ?? null,
+          guardado.extension,
+          peticion.mimeType ?? null,
+          guardado.tamanioBytes,
+          guardado.hashSha256,
+          existente.IdMultimedia,
         ],
       );
 
@@ -179,22 +199,33 @@ export class MultimediaService {
       };
     }
 
-    const insertado: Array<{ IdMultimedia: string | number }> = await this.dataSource.query(
-      `INSERT INTO appEx_Multimedia
+    const insertado: Array<{ IdMultimedia: string | number }> =
+      await this.dataSource.query(
+        `INSERT INTO appEx_Multimedia
          (IdCaptura, IdEncuesta, IdPregunta, ClaveInstancia, Secuencia, TipoMedio,
           RutaRelativa, NombreArchivo, NombreOriginal, Extension, MimeType,
           TamanioBytes, HashSha256, IdUsuario, DispositivoID, FechaCaptura)
        OUTPUT inserted.IdMultimedia
        VALUES (@0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, @12, @13, @14, @15)`,
-      [
-        contexto.idCaptura, contexto.idEncuesta, contexto.idPregunta,
-        contexto.claveInstancia ?? '', contexto.secuencia ?? 1, peticion.tipoMedio,
-        guardado.rutaRelativa, guardado.nombreArchivo, peticion.nombreOriginal ?? null,
-        guardado.extension, peticion.mimeType ?? null, guardado.tamanioBytes,
-        guardado.hashSha256, idUsuario, peticion.dispositivoId ?? null,
-        peticion.fechaCaptura ?? null,
-      ],
-    );
+        [
+          contexto.idCaptura,
+          contexto.idEncuesta,
+          contexto.idPregunta,
+          contexto.claveInstancia ?? '',
+          contexto.secuencia ?? 1,
+          peticion.tipoMedio,
+          guardado.rutaRelativa,
+          guardado.nombreArchivo,
+          peticion.nombreOriginal ?? null,
+          guardado.extension,
+          peticion.mimeType ?? null,
+          guardado.tamanioBytes,
+          guardado.hashSha256,
+          idUsuario,
+          peticion.dispositivoId ?? null,
+          peticion.fechaCaptura ?? null,
+        ],
+      );
 
     return {
       idMultimedia: String(insertado?.[0]?.IdMultimedia ?? ''),

@@ -1,4 +1,9 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+} from 'typeorm';
 
 @Entity('Usuarios_AppEx') // Mapearemos esto a una tabla llamada "Usuarios" en SQL Server
 export class User {
@@ -8,7 +13,7 @@ export class User {
   @Column({ type: 'varchar', length: 100, unique: true })
   username: string;
 
-  @Column({ type: 'varchar', length: 100  })
+  @Column({ type: 'varchar', length: 100 })
   nombrecompleto: string;
 
   @Column({ type: 'varchar', length: 255 })

@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { AckSyncDto } from '../domain/dtos/sync-deltas.dto';
 
@@ -14,17 +18,23 @@ export class SyncService {
     let versionMinima = '1.0.0';
     try {
       const filas = await this.dataSource.query(
-        `SELECT Valor FROM Cat_Parametros_AppEx WHERE Clave = 'VERSION_MINIMA_APP'`
+        `SELECT Valor FROM Cat_Parametros_AppEx WHERE Clave = 'VERSION_MINIMA_APP'`,
       );
-      if (filas.length && filas[0].Valor && String(filas[0].Valor).trim() !== '') {
+      if (
+        filas.length &&
+        filas[0].Valor &&
+        String(filas[0].Valor).trim() !== ''
+      ) {
         versionMinima = String(filas[0].Valor).trim();
       }
     } catch (e) {
       // Tabla ausente en ambientes antiguos: se conserva el fallback permisivo.
     }
 
-    const segA = String(appVersion || '0').split('.').map(s => parseInt(s, 10) || 0);
-    const segB = versionMinima.split('.').map(s => parseInt(s, 10) || 0);
+    const segA = String(appVersion || '0')
+      .split('.')
+      .map((s) => parseInt(s, 10) || 0);
+    const segB = versionMinima.split('.').map((s) => parseInt(s, 10) || 0);
     for (let i = 0; i < Math.max(segA.length, segB.length); i++) {
       const diff = (segA[i] || 0) - (segB[i] || 0);
       if (diff < 0) throw new ForbiddenException('Update Required');
@@ -33,11 +43,14 @@ export class SyncService {
   }
 
   // 1. Método Principal: TraerDeltas (POST) - Formato Nativo WatermelonDB
-  async obtenerDeltas(lastSyncDates: Record<string, string | null>, deviceToken: string) {
+  async obtenerDeltas(
+    lastSyncDates: Record<string, string | null>,
+    deviceToken: string,
+  ) {
     // Validar estado del dispositivo (Seguridad Física)
     const dispositivo = await this.dataSource.query(
       `SELECT IdDispositivo, Estado FROM Dispositivos_AppEx WHERE DeviceToken = @0`,
-      [deviceToken]
+      [deviceToken],
     );
     if (!dispositivo.length || !dispositivo[0].Estado) {
       throw new UnauthorizedException('Device Blocked');
@@ -53,10 +66,10 @@ export class SyncService {
 
     // --- SINCRONIZACIÓN DE CAT_MENU ---
     const menuSyncDate = lastSyncDates['cat_menu_appex'] || null;
-    
+
     // Optimizamos: Comparamos con Control_Versiones primero
     const versionMenu = await this.dataSource.query(
-      `SELECT UltimaModificacion FROM Control_Versiones_AppEx WHERE TablaNombre = 'Cat_Menu_AppEx'`
+      `SELECT UltimaModificacion FROM Control_Versiones_AppEx WHERE TablaNombre = 'Cat_Menu_AppEx'`,
     );
 
     // Solo consultamos si nunca ha sincronizado o si hay una versión más reciente.
@@ -65,16 +78,22 @@ export class SyncService {
     // correctitud. Acceder a versionMenu[0] sin comprobar lanzaba un TypeError (500 en
     // TODA sincronización incremental) cuando la fila faltaba o estaba mal nombrada.
     const ultimaModMenu = versionMenu?.[0]?.UltimaModificacion ?? null;
-    if (!menuSyncDate || !ultimaModMenu || new Date(ultimaModMenu) > new Date(menuSyncDate)) {
-      
+    if (
+      !menuSyncDate ||
+      !ultimaModMenu ||
+      new Date(ultimaModMenu) > new Date(menuSyncDate)
+    ) {
       // Obtenemos los deltas reales
-      const menusQuery = menuSyncDate 
+      const menusQuery = menuSyncDate
         ? `SELECT * FROM Cat_Menu_AppEx WHERE FechaModificacion > @0`
         : `SELECT * FROM Cat_Menu_AppEx`; // Si es null, trae todos
-      
-      const menus = await this.dataSource.query(menusQuery, menuSyncDate ? [menuSyncDate] : []);
 
-      menus.forEach(row => {
+      const menus = await this.dataSource.query(
+        menusQuery,
+        menuSyncDate ? [menuSyncDate] : [],
+      );
+
+      menus.forEach((row) => {
         // WatermelonDB EXIGE que los IDs sean strings
         const watermelonRecord = {
           id: row.IdMenu.toString(),
@@ -84,7 +103,10 @@ export class SyncService {
           orden: row.Orden,
           ruta_pantalla: row.RutaPantalla,
           // Menú gateado por permisos (Anexo 1, sprint 3.2). NULL = visible para todos.
-          id_permiso_requerido: row.IdPermisoRequerido != null ? row.IdPermisoRequerido.toString() : null,
+          id_permiso_requerido:
+            row.IdPermisoRequerido != null
+              ? row.IdPermisoRequerido.toString()
+              : null,
           // No enviamos el 'Estado' a la app, WatermelonDB usa la lógica de deleted
         };
 
@@ -106,19 +128,26 @@ export class SyncService {
     // --- (AQUÍ REPETIRÍAMOS LA LÓGICA PARA CAT_PARAMETROS Y OTRAS TABLAS) ---.
     const paramSyncDate = lastSyncDates['cat_parametros_appex'] || null;
     const versionParam = await this.dataSource.query(
-      `SELECT UltimaModificacion FROM Control_Versiones_AppEx WHERE TablaNombre = 'Cat_Parametros_AppEx'`
+      `SELECT UltimaModificacion FROM Control_Versiones_AppEx WHERE TablaNombre = 'Cat_Parametros_AppEx'`,
     );
 
     // Mismo blindaje que en el bloque de menú (ver comentario arriba).
     const ultimaModParam = versionParam?.[0]?.UltimaModificacion ?? null;
-    if (!paramSyncDate || !ultimaModParam || new Date(ultimaModParam) > new Date(paramSyncDate)) {
-      const paramQuery = paramSyncDate 
+    if (
+      !paramSyncDate ||
+      !ultimaModParam ||
+      new Date(ultimaModParam) > new Date(paramSyncDate)
+    ) {
+      const paramQuery = paramSyncDate
         ? `SELECT * FROM Cat_Parametros_AppEx WHERE FechaModificacion > @0`
-        : `SELECT * FROM Cat_Parametros_AppEx`; 
-      
-      const parametros = await this.dataSource.query(paramQuery, paramSyncDate ? [paramSyncDate] : []);
+        : `SELECT * FROM Cat_Parametros_AppEx`;
 
-      parametros.forEach(row => {
+      const parametros = await this.dataSource.query(
+        paramQuery,
+        paramSyncDate ? [paramSyncDate] : [],
+      );
+
+      parametros.forEach((row) => {
         const watermelonRecord = {
           id: row.Clave, // Usamos la Clave como ID obligatorio para WatermelonDB
           clave: row.Clave,
@@ -148,7 +177,7 @@ export class SyncService {
 
     const dispositivo = await this.dataSource.query(
       `SELECT IdDispositivo FROM Dispositivos_AppEx WHERE DeviceToken = @0`,
-      [deviceToken]
+      [deviceToken],
     );
 
     if (dispositivo.length) {
@@ -156,7 +185,7 @@ export class SyncService {
       await this.dataSource.query(
         `INSERT INTO Log_Sincronizacion_AppEx (IdDispositivo, TablaNombre, FechaSinc, Exitoso)
          VALUES (@0, @1, GETDATE(), @2)`,
-        [dispositivo[0].IdDispositivo, tablaNombre, exitoso ? 1 : 0]
+        [dispositivo[0].IdDispositivo, tablaNombre, exitoso ? 1 : 0],
       );
     }
 
@@ -175,9 +204,9 @@ export class SyncService {
   // 3. Método: ObtenerParametros (GET) - Regla 3.1
   async obtenerParametros() {
     const parametros = await this.dataSource.query(
-      `SELECT Clave, Valor FROM Cat_Parametros_AppEx`
+      `SELECT Clave, Valor FROM Cat_Parametros_AppEx`,
     );
-    
+
     // Transformamos el array de SQL a un objeto clave-valor simple
     const configGlobal = parametros.reduce((acc, curr) => {
       acc[curr.Clave] = curr.Valor;
@@ -190,12 +219,11 @@ export class SyncService {
   // ==========================================
   // 1. PULL: WatermelonDB pide datos nuevos
   // ==========================================
- async getChanges(lastPulledAt: number) {
-
+  async getChanges(lastPulledAt: number) {
     // 1. Preparar el timestamp de comparación
     // WatermelonDB envía el timestamp en milisegundos.
-    const lastSyncDate = lastPulledAt 
-      ? new Date(lastPulledAt).toISOString() 
+    const lastSyncDate = lastPulledAt
+      ? new Date(lastPulledAt).toISOString()
       : '2016-01-01T00:00:00Z'; // Fecha base para descarga total propuesta de 10 años
 
     const serverTimestamp = new Date().getTime();
@@ -203,22 +231,22 @@ export class SyncService {
       app_ex_encuesta: { created: [], updated: [], deleted: [] },
       app_ex_pregunta: { created: [], updated: [], deleted: [] },
     };
-    
+
     try {
       // --- LÓGICA PARA ENCUESTAS ---
       // Se buscan encuestas creadas o modificadas después de la última sincronización
       const encuestas = await this.dataSource.query(
         `SELECT * FROM appEx_Encuesta WHERE FechaModificacion > @0`,
-        [lastSyncDate]
+        [lastSyncDate],
       );
 
-      encuestas.forEach(row => {
+      encuestas.forEach((row) => {
         const item = {
           id: row.IdEncuesta.toString(),
           nombre: row.Nombre,
           estado: row.Estado,
         };
-        
+
         // Si la fecha de creación es muy cercana a la de modificación, es "created", si no, "updated"
         // Para simplificar la lógica offline, WatermelonDB acepta todo en "created" y hace UPSERT automático
         changes.app_ex_encuesta.created.push(item);
@@ -231,10 +259,10 @@ export class SyncService {
          FROM appEx_Pregunta p
          LEFT JOIN appEx_Reglas r ON p.IdPregunta = r.IdPregunta
          WHERE p.FechaModificacion > @0 OR r.FechaModificacion > @0`,
-        [lastSyncDate]
+        [lastSyncDate],
       );
 
-      preguntas.forEach(row => {
+      preguntas.forEach((row) => {
         changes.app_ex_pregunta.created.push({
           id: row.IdPregunta.toString(),
           encuesta_id: row.IdSeccion.toString(), // En este motor dinámico vinculamos a la sección/encuesta
@@ -244,18 +272,17 @@ export class SyncService {
           orden: row.Orden,
           valor_defecto: row.ValorDefecto || null,
           opciones: row.Opciones || null, // Se envía el string JSON de opciones
-          catalogo: row.Catalogo || null
+          catalogo: row.Catalogo || null,
         });
       });
 
       // Nota: Para implementar 'deleted', se requeriría una tabla de auditoría (Soft Delete)
       // que registre los IDs eliminados y su fecha de borrado.
 
-      return { 
-        changes, 
-        timestamp: serverTimestamp 
+      return {
+        changes,
+        timestamp: serverTimestamp,
       };
-
     } catch (error) {
       console.error('Error al generar Deltas para WatermelonDB:', error);
       throw error;
@@ -275,7 +302,7 @@ export class SyncService {
       for (const resp of respuestasToCreate) {
         await queryRunner.query(
           `INSERT INTO appEx_Respuestas (IdPregunta, IdEncuesta, Valor, SyncStatus) VALUES (@0, @1, @2, 'SYNCED')`,
-          [resp.pregunta_id, resp.encuesta_id, resp.valor]
+          [resp.pregunta_id, resp.encuesta_id, resp.valor],
         );
       }
 
@@ -283,7 +310,7 @@ export class SyncService {
       for (const resp of respuestasToUpdate) {
         await queryRunner.query(
           `UPDATE appEx_Respuestas SET Valor = @0, SyncStatus = 'SYNCED' WHERE IdPregunta = @1 AND IdEncuesta = @2`,
-          [resp.valor, resp.pregunta_id, resp.encuesta_id]
+          [resp.valor, resp.pregunta_id, resp.encuesta_id],
         );
       }
 

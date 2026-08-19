@@ -6,7 +6,10 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 
-import { DiagnosticsService, type ResultadoRecepcion } from '../application/diagnostics.service';
+import {
+  DiagnosticsService,
+  type ResultadoRecepcion,
+} from '../application/diagnostics.service';
 
 /** Cuerpo esperado. Se tipa explícitamente en vez de aceptar `any`. */
 interface CuerpoBitacora {
@@ -36,7 +39,8 @@ export class DiagnosticsController {
     @Headers('x-device-token') deviceToken: string,
     @Headers('x-user-id') userId: string,
   ): Promise<{ success: true } & ResultadoRecepcion> {
-    if (!deviceToken) throw new UnauthorizedException('Dispositivo no autenticado');
+    if (!deviceToken)
+      throw new UnauthorizedException('Dispositivo no autenticado');
 
     const idUsuario = Number(userId);
     const resultado = await this.diagnosticsService.registrarLote(

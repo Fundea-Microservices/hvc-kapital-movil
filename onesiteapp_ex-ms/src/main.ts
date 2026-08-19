@@ -16,8 +16,14 @@ async function bootstrap() {
   app.use(json({ limit: limiteJson }));
   app.use(urlencoded({ limit: limiteJson, extended: true }));
 
-app.enableCors({
-    origin: ['http://localhost:8081', 'http://localhost:4200', 'http://172.25.5.11', 'http://localhost','https://serviciosfundea.org'],
+  app.enableCors({
+    origin: [
+      'http://localhost:8081',
+      'http://localhost:4200',
+      'http://172.25.5.11',
+      'http://localhost',
+      'https://serviciosfundea.org',
+    ],
     credentials: true, // si usas cookies o Authorization headers
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   });
@@ -30,7 +36,7 @@ app.enableCors({
   // ---------------------
 
   await app.listen(process.env.PORT ?? 5030);
-  
-  console.log(`🚀 Microservicio corriendo en: http://localhost:5030`)
+
+  console.log(`🚀 Microservicio corriendo en: http://localhost:5030`);
 }
 bootstrap();

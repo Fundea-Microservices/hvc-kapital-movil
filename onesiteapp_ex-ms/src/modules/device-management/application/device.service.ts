@@ -1,4 +1,9 @@
-import { Injectable, UnauthorizedException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { EnrollDeviceDto } from '../domain/dtos/enroll-device.dto';
 import { UpdateMetadataDto } from '../domain/dtos/update-metadata.dto';
@@ -15,7 +20,7 @@ export class DeviceService {
     // Obtenemos NombreEmpresa además del ID y Estado
     const empresa = await this.dataSource.query(
       `SELECT IdEmpresa, NombreEmpresa, Estado FROM Empresas_AppEX WHERE CodigoEnrolamiento = @0`,
-      [codigoEnrolamiento]
+      [codigoEnrolamiento],
     );
 
     if (!empresa.length || !empresa[0].Estado) {
@@ -26,12 +31,14 @@ export class DeviceService {
 
     const dispositivoExistente = await this.dataSource.query(
       `SELECT IdDispositivo, Estado, DeviceToken FROM Dispositivos_AppEX WHERE HardwareID = @0`,
-      [hardwareId]
+      [hardwareId],
     );
 
     if (dispositivoExistente.length > 0) {
       if (!dispositivoExistente[0].Estado) {
-         throw new UnauthorizedException('Dispositivo bloqueado (Device Blocked)');
+        throw new UnauthorizedException(
+          'Dispositivo bloqueado (Device Blocked)',
+        );
       }
 
       // Re-vinculación de equipos legacy: los enrolados antes del Sprint 7 quedaron
@@ -39,13 +46,13 @@ export class DeviceService {
       await this.dataSource.query(
         `UPDATE Dispositivos_AppEX SET IdEmpresa = @1, FechaModificacion = GETDATE()
          WHERE IdDispositivo = @0 AND IdEmpresa IS NULL`,
-        [dispositivoExistente[0].IdDispositivo, empresa[0].IdEmpresa]
+        [dispositivoExistente[0].IdDispositivo, empresa[0].IdEmpresa],
       );
 
       return {
         message: 'Equipo ya enrolado',
         deviceToken: dispositivoExistente[0].DeviceToken,
-        companyName: companyName // Añadido a la respuesta
+        companyName: companyName, // Añadido a la respuesta
       };
     }
 
@@ -55,7 +62,7 @@ export class DeviceService {
     await this.dataSource.query(
       `INSERT INTO Dispositivos_AppEX (HardwareID, DeviceToken, IdEmpresa, Estado, FechaIngreso, FechaModificacion)
        VALUES (@0, @1, @2, 1, GETDATE(), GETDATE())`,
-      [hardwareId, newDeviceToken, empresa[0].IdEmpresa]
+      [hardwareId, newDeviceToken, empresa[0].IdEmpresa],
     );
 
     return {
@@ -72,7 +79,7 @@ export class DeviceService {
     // Verificamos que el dispositivo exista y esté activo
     const dispositivo = await this.dataSource.query(
       `SELECT IdDispositivo, Estado FROM Dispositivos_AppEX WHERE DeviceToken = @0`,
-      [deviceToken]
+      [deviceToken],
     );
 
     if (!dispositivo.length) {
@@ -88,7 +95,7 @@ export class DeviceService {
       `UPDATE Dispositivos_AppEX 
        SET Modelo = @0, VersionSO = @1, FechaModificacion = GETDATE()
        WHERE DeviceToken = @2`,
-      [modelo, versionSO, deviceToken]
+      [modelo, versionSO, deviceToken],
     );
 
     return {
@@ -102,7 +109,7 @@ export class DeviceService {
     // 1. Verificamos que el dispositivo exista
     const dispositivo = await this.dataSource.query(
       `SELECT IdDispositivo FROM Dispositivos WHERE DeviceToken = @0`,
-      [deviceToken]
+      [deviceToken],
     );
 
     if (!dispositivo.length) {
@@ -115,7 +122,7 @@ export class DeviceService {
       `UPDATE Dispositivos 
        SET Estado = 0, FechaModificacion = GETDATE() 
        WHERE DeviceToken = @0`,
-      [deviceToken]
+      [deviceToken],
     );
 
     // 3. Regla Crítica 4.5: Bloqueo de hardware superior a sesión
@@ -124,10 +131,13 @@ export class DeviceService {
       `UPDATE Sesiones 
        SET Activa = 0 
        WHERE IdDispositivo = @0`,
-      [dispositivo[0].IdDispositivo]
+      [dispositivo[0].IdDispositivo],
     );
 
-    return { message: 'Dispositivo bloqueado exitosamente. Se ejecutará Wipe en su próxima petición.' };
+    return {
+      message:
+        'Dispositivo bloqueado exitosamente. Se ejecutará Wipe en su próxima petición.',
+    };
   }
 
   // SPRINT 4: Método 4.1 - VerificarVersion (GET)
@@ -138,9 +148,13 @@ export class DeviceService {
     let versionMinimaRequerida = '1.0.0';
     try {
       const filas = await this.dataSource.query(
-        `SELECT Valor FROM Cat_Parametros_AppEx WHERE Clave = 'VERSION_MINIMA_APP'`
+        `SELECT Valor FROM Cat_Parametros_AppEx WHERE Clave = 'VERSION_MINIMA_APP'`,
       );
-      if (filas.length && filas[0].Valor && String(filas[0].Valor).trim() !== '') {
+      if (
+        filas.length &&
+        filas[0].Valor &&
+        String(filas[0].Valor).trim() !== ''
+      ) {
         versionMinimaRequerida = String(filas[0].Valor).trim();
       }
     } catch (e) {
@@ -149,7 +163,8 @@ export class DeviceService {
 
     // Comparación por segmentos numéricos. La comparación lexicográfica de strings
     // está rota para versiones ("1.2.0" < "1.10.0" da falso con strings).
-    const esObsoleta = this.compararVersiones(appVersion, versionMinimaRequerida) < 0;
+    const esObsoleta =
+      this.compararVersiones(appVersion, versionMinimaRequerida) < 0;
 
     if (esObsoleta) {
       throw new ForbiddenException('Update Required');
@@ -158,14 +173,18 @@ export class DeviceService {
     return {
       valid: true,
       minVersion: versionMinimaRequerida,
-      message: 'Versión compatible'
+      message: 'Versión compatible',
     };
   }
 
   /** Devuelve <0 si a<b, 0 si iguales, >0 si a>b, comparando segmento a segmento. */
   private compararVersiones(a: string, b: string): number {
-    const segA = String(a || '0').split('.').map(s => parseInt(s, 10) || 0);
-    const segB = String(b || '0').split('.').map(s => parseInt(s, 10) || 0);
+    const segA = String(a || '0')
+      .split('.')
+      .map((s) => parseInt(s, 10) || 0);
+    const segB = String(b || '0')
+      .split('.')
+      .map((s) => parseInt(s, 10) || 0);
     const largo = Math.max(segA.length, segB.length);
     for (let i = 0; i < largo; i++) {
       const diff = (segA[i] || 0) - (segB[i] || 0);
@@ -173,5 +192,4 @@ export class DeviceService {
     }
     return 0;
   }
-
 }

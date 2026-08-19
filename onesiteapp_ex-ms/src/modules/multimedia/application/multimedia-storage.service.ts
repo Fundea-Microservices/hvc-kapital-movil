@@ -1,4 +1,11 @@
-import { Injectable, Logger, OnModuleInit, InternalServerErrorException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  InternalServerErrorException,
+  ForbiddenException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createReadStream, ReadStream } from 'fs';
 import { access, constants, mkdir, stat, writeFile } from 'fs/promises';
@@ -61,12 +68,14 @@ export class MultimediaStorageService implements OnModuleInit {
    * pero acotado a su módulo.
    */
   async onModuleInit(): Promise<void> {
-    const configurada = (this.config.get<string>('MULTIMEDIA_RUTA_RAIZ') || '').trim();
+    const configurada = (
+      this.config.get<string>('MULTIMEDIA_RUTA_RAIZ') || ''
+    ).trim();
 
     if (configurada === '') {
       this.deshabilitar(
         'MULTIMEDIA_RUTA_RAIZ no está definida en el .env. No se asume ningún valor por ' +
-        'defecto: un directorio improvisado se borraría en el siguiente despliegue.',
+          'defecto: un directorio improvisado se borraría en el siguiente despliegue.',
       );
       return;
     }
@@ -74,8 +83,8 @@ export class MultimediaStorageService implements OnModuleInit {
     if (!isAbsolute(configurada)) {
       this.deshabilitar(
         `MULTIMEDIA_RUTA_RAIZ debe ser una ruta ABSOLUTA (recibido: "${configurada}"). ` +
-        'Una ruta relativa se resuelve contra el cwd del proceso, que bajo pm2 no es la ' +
-        'raíz del proyecto — el mismo fallo que tuvo envFilePath.',
+          'Una ruta relativa se resuelve contra el cwd del proceso, que bajo pm2 no es la ' +
+          'raíz del proyecto — el mismo fallo que tuvo envFilePath.',
       );
       return;
     }
@@ -87,7 +96,9 @@ export class MultimediaStorageService implements OnModuleInit {
       await access(candidata, constants.W_OK);
     } catch (error) {
       const detalle = error instanceof Error ? error.message : String(error);
-      this.deshabilitar(`MULTIMEDIA_RUTA_RAIZ no es escribible ("${candidata}"): ${detalle}`);
+      this.deshabilitar(
+        `MULTIMEDIA_RUTA_RAIZ no es escribible ("${candidata}"): ${detalle}`,
+      );
       return;
     }
 
@@ -100,11 +111,13 @@ export class MultimediaStorageService implements OnModuleInit {
   private deshabilitar(motivo: string): void {
     this.motivoDeshabilitado = motivo;
     this.logger.error('='.repeat(78));
-    this.logger.error('MULTIMEDIA DESHABILITADO — el resto del backend sigue operativo.');
+    this.logger.error(
+      'MULTIMEDIA DESHABILITADO — el resto del backend sigue operativo.',
+    );
     this.logger.error(motivo);
     this.logger.error(
       'Los adjuntos no se podrán subir y quedarán en cola en los dispositivos hasta ' +
-      'que se corrija la variable y se reinicie el servicio. No se pierde nada.',
+        'que se corrija la variable y se reinicie el servicio. No se pierde nada.',
     );
     this.logger.error('='.repeat(78));
   }
@@ -124,10 +137,12 @@ export class MultimediaStorageService implements OnModuleInit {
    */
   private exigirDisponible(): void {
     if (this.estaDisponible()) return;
-    this.logger.warn(`Petición de multimedia rechazada: ${this.motivoDeshabilitado}`);
+    this.logger.warn(
+      `Petición de multimedia rechazada: ${this.motivoDeshabilitado}`,
+    );
     throw new ServiceUnavailableException(
       'El almacenamiento de archivos no está configurado en el servidor. ' +
-      'Los adjuntos permanecerán en cola en el dispositivo.',
+        'Los adjuntos permanecerán en cola en el dispositivo.',
     );
   }
 
@@ -149,8 +164,13 @@ export class MultimediaStorageService implements OnModuleInit {
       DOCUMENTO: 'pdf,doc,docx,xls,xlsx,csv,txt',
       FIRMA: 'png,jpg,jpeg',
     };
-    const crudo = this.config.get<string>(`MULTIMEDIA_EXTENSIONES_${tipo}`) || porDefecto[tipo];
-    return crudo.split(',').map(e => normalizarExtension(e)).filter(e => e !== '');
+    const crudo =
+      this.config.get<string>(`MULTIMEDIA_EXTENSIONES_${tipo}`) ||
+      porDefecto[tipo];
+    return crudo
+      .split(',')
+      .map((e) => normalizarExtension(e))
+      .filter((e) => e !== '');
   }
 
   /**
@@ -185,8 +205,12 @@ export class MultimediaStorageService implements OnModuleInit {
     // servidor, así que esto no debería fallar nunca; si algún día alguien introduce
     // un componente de origen externo, esta línea lo detiene antes del disco.
     if (!esNombreSeguro(nombreArchivo)) {
-      this.logger.error(`Nombre generado no seguro, se aborta: "${nombreArchivo}"`);
-      throw new InternalServerErrorException('No se pudo determinar un nombre de archivo seguro');
+      this.logger.error(
+        `Nombre generado no seguro, se aborta: "${nombreArchivo}"`,
+      );
+      throw new InternalServerErrorException(
+        'No se pudo determinar un nombre de archivo seguro',
+      );
     }
 
     const rutaRelativa = construirRutaRelativa(contexto, extension, '/');
@@ -202,7 +226,9 @@ export class MultimediaStorageService implements OnModuleInit {
     }
 
     const hashSha256 = createHash('sha256').update(buffer).digest('hex');
-    this.logger.log(`Archivo guardado: ${rutaRelativa} (${buffer.length} bytes)`);
+    this.logger.log(
+      `Archivo guardado: ${rutaRelativa} (${buffer.length} bytes)`,
+    );
 
     return {
       rutaRelativa,
@@ -221,7 +247,9 @@ export class MultimediaStorageService implements OnModuleInit {
    * absoluta: si una fila fuera manipulada o quedara mal escrita por una migración,
    * este endpoint se convertiría en un lector arbitrario del sistema de archivos.
    */
-  async abrir(rutaRelativa: string): Promise<{ stream: ReadStream; tamanioBytes: number }> {
+  async abrir(
+    rutaRelativa: string,
+  ): Promise<{ stream: ReadStream; tamanioBytes: number }> {
     this.exigirDisponible();
 
     const rutaAbsoluta = this.resolverAbsoluta(rutaRelativa);
@@ -251,7 +279,9 @@ export class MultimediaStorageService implements OnModuleInit {
     const absoluta = resolve(this.raiz, rutaRelativa);
 
     if (!esRutaContenida(absoluta, this.raiz, sep)) {
-      this.logger.error(`Intento de acceso fuera de la raíz: "${rutaRelativa}" -> "${absoluta}"`);
+      this.logger.error(
+        `Intento de acceso fuera de la raíz: "${rutaRelativa}" -> "${absoluta}"`,
+      );
       throw new ForbiddenException('Ruta de archivo no permitida');
     }
 

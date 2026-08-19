@@ -9,12 +9,14 @@ import {
 
 describe('normalizarNivel', () => {
   it('reconoce WARN sin importar el formato', () => {
-    ['WARN', 'warn', ' Warn '].forEach(v => expect(normalizarNivel(v)).toBe('WARN'));
+    ['WARN', 'warn', ' Warn '].forEach((v) =>
+      expect(normalizarNivel(v)).toBe('WARN'),
+    );
   });
 
   it('cualquier otro valor cae a ERROR, no se descarta', () => {
     // Una entrada con el nivel mal escrito sigue siendo informacion de un fallo real.
-    ['ERROR', 'critico', '', null, undefined, 42].forEach(v =>
+    ['ERROR', 'critico', '', null, undefined, 42].forEach((v) =>
       expect(normalizarNivel(v)).toBe('ERROR'),
     );
   });
@@ -38,7 +40,7 @@ describe('normalizarFecha — el reloj del dispositivo no es de fiar', () => {
   });
 
   it('rechaza texto que no es una fecha', () => {
-    ['', 'ayer', null, undefined, '2026-13-45'].forEach(v =>
+    ['', 'ayer', null, undefined, '2026-13-45'].forEach((v) =>
       expect(normalizarFecha(v, ahora)).toBeNull(),
     );
   });
@@ -91,7 +93,11 @@ describe('normalizarEntrada', () => {
 });
 
 describe('normalizarLote', () => {
-  const entrada = (n: number) => ({ nivel: 'ERROR', origen: 'o', mensaje: `msg ${n}` });
+  const entrada = (n: number) => ({
+    nivel: 'ERROR',
+    origen: 'o',
+    mensaje: `msg ${n}`,
+  });
 
   it('TRUNCA en lugar de rechazar el lote entero', () => {
     // Si se devolviera un error, el dispositivo reintentaria el mismo lote gigante
@@ -106,6 +112,8 @@ describe('normalizarLote', () => {
   });
 
   it('un cuerpo que no es arreglo devuelve lista vacia', () => {
-    [null, undefined, {}, 'texto', 42].forEach(v => expect(normalizarLote(v)).toEqual([]));
+    [null, undefined, {}, 'texto', 42].forEach((v) =>
+      expect(normalizarLote(v)).toEqual([]),
+    );
   });
 });

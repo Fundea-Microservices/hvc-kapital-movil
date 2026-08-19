@@ -22,17 +22,23 @@ describe('normalizarClaveCatalogo', () => {
     [undefined, ''],
     ['', ''],
   ])('normaliza %p -> %p', (entrada, esperado) => {
-    expect(normalizarClaveCatalogo(entrada as string | null | undefined)).toBe(esperado);
+    expect(normalizarClaveCatalogo(entrada)).toBe(esperado);
   });
 });
 
 describe('variantesClave', () => {
   it('DEPARTAMENTOS -> [DEPARTAMENTOS, DEPARTAMENTO], exacto primero', () => {
-    expect(variantesClave('DEPARTAMENTOS')).toEqual(['DEPARTAMENTOS', 'DEPARTAMENTO']);
+    expect(variantesClave('DEPARTAMENTOS')).toEqual([
+      'DEPARTAMENTOS',
+      'DEPARTAMENTO',
+    ]);
   });
 
   it('DEPARTAMENTO -> [DEPARTAMENTO, DEPARTAMENTOS], exacto primero', () => {
-    expect(variantesClave('DEPARTAMENTO')).toEqual(['DEPARTAMENTO', 'DEPARTAMENTOS']);
+    expect(variantesClave('DEPARTAMENTO')).toEqual([
+      'DEPARTAMENTO',
+      'DEPARTAMENTOS',
+    ]);
   });
 
   it('MUNICIPIOS -> [MUNICIPIOS, MUNICIPIO]', () => {
@@ -48,7 +54,10 @@ describe('variantesClave', () => {
   });
 
   it('CENTRO_POBLADO (vocal final) -> [CENTRO_POBLADO, CENTRO_POBLADOS]', () => {
-    expect(variantesClave('CENTRO_POBLADO')).toEqual(['CENTRO_POBLADO', 'CENTRO_POBLADOS']);
+    expect(variantesClave('CENTRO_POBLADO')).toEqual([
+      'CENTRO_POBLADO',
+      'CENTRO_POBLADOS',
+    ]);
   });
 
   it('clave vacía -> []', () => {
@@ -57,7 +66,9 @@ describe('variantesClave', () => {
 
   it('nunca duplica variantes', () => {
     for (const v of variantesClave('DEPARTAMENTOS')) {
-      expect(variantesClave('DEPARTAMENTOS').filter((x) => x === v)).toHaveLength(1);
+      expect(
+        variantesClave('DEPARTAMENTOS').filter((x) => x === v),
+      ).toHaveLength(1);
     }
   });
 });
@@ -103,7 +114,9 @@ describe('esUrlAbsoluta / esRutaRelativa', () => {
 
 describe('esDependienteUrl', () => {
   it('detecta el placeholder {padre}', () => {
-    expect(esDependienteUrl(`http://x/municipios/${PLACEHOLDER_PADRE}`)).toBe(true);
+    expect(esDependienteUrl(`http://x/municipios/${PLACEHOLDER_PADRE}`)).toBe(
+      true,
+    );
   });
 
   it('URL sin placeholder no es dependiente', () => {
@@ -119,6 +132,8 @@ describe('sustituirCodigoPadre', () => {
 
   it('codifica el código para URL', () => {
     const url = `http://x?valorCore=${PLACEHOLDER_PADRE}`;
-    expect(sustituirCodigoPadre(url, 'a b/c')).toBe('http://x?valorCore=a%20b%2Fc');
+    expect(sustituirCodigoPadre(url, 'a b/c')).toBe(
+      'http://x?valorCore=a%20b%2Fc',
+    );
   });
 });

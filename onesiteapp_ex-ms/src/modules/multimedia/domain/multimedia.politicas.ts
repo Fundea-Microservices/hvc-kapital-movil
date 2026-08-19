@@ -40,24 +40,69 @@ export interface ResultadoValidacion {
  *  Son las que se ejecutan o se interpretan al abrirlas: si una de ellas llegara a
  *  servirse, un adjunto se convertiría en XSS almacenado o en código ejecutable. */
 const EXTENSIONES_PROHIBIDAS: readonly string[] = [
-  'svg', 'html', 'htm', 'xhtml', 'js', 'mjs', 'jsx', 'php', 'phtml', 'exe', 'dll',
-  'bat', 'cmd', 'com', 'sh', 'ps1', 'jar', 'apk', 'msi', 'scr', 'vbs', 'hta', 'swf',
+  'svg',
+  'html',
+  'htm',
+  'xhtml',
+  'js',
+  'mjs',
+  'jsx',
+  'php',
+  'phtml',
+  'exe',
+  'dll',
+  'bat',
+  'cmd',
+  'com',
+  'sh',
+  'ps1',
+  'jar',
+  'apk',
+  'msi',
+  'scr',
+  'vbs',
+  'hta',
+  'swf',
 ];
 
 /** Nombres reservados por Windows. Un archivo llamado `CON` o `LPT1` es imposible de
  *  crear y algunas rutas heredadas lo tratan como dispositivo. */
 const NOMBRES_RESERVADOS_WINDOWS: readonly string[] = [
-  'con', 'prn', 'aux', 'nul',
-  'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
-  'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
+  'con',
+  'prn',
+  'aux',
+  'nul',
+  'com1',
+  'com2',
+  'com3',
+  'com4',
+  'com5',
+  'com6',
+  'com7',
+  'com8',
+  'com9',
+  'lpt1',
+  'lpt2',
+  'lpt3',
+  'lpt4',
+  'lpt5',
+  'lpt6',
+  'lpt7',
+  'lpt8',
+  'lpt9',
 ];
 
 /**
  * Normaliza una extensión: minúsculas, sin punto inicial, sin espacios. Devuelve
  * cadena vacía si no es una extensión alfanumérica plausible.
  */
-export const normalizarExtension = (extension: string | null | undefined): string => {
-  const limpia = String(extension ?? '').trim().toLowerCase().replace(/^\.+/, '');
+export const normalizarExtension = (
+  extension: string | null | undefined,
+): string => {
+  const limpia = String(extension ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\.+/, '');
   if (!/^[a-z0-9]{1,10}$/.test(limpia)) return '';
   return limpia;
 };
@@ -73,31 +118,49 @@ export const validarTipo = (
   permitidas: readonly string[],
 ): ResultadoValidacion => {
   const ext = normalizarExtension(extension);
-  if (ext === '') return { valido: false, motivo: 'Extensión ausente o no válida' };
+  if (ext === '')
+    return { valido: false, motivo: 'Extensión ausente o no válida' };
   if (EXTENSIONES_PROHIBIDAS.includes(ext)) {
-    return { valido: false, motivo: `Extensión .${ext} prohibida por política` };
+    return {
+      valido: false,
+      motivo: `Extensión .${ext} prohibida por política`,
+    };
   }
-  const blanca = permitidas.map(e => normalizarExtension(e)).filter(e => e !== '');
+  const blanca = permitidas
+    .map((e) => normalizarExtension(e))
+    .filter((e) => e !== '');
   if (blanca.length === 0) {
     // Sin lista configurada no se acepta nada: es preferible un rechazo visible a
     // aceptar cualquier cosa porque una variable de entorno faltaba.
-    return { valido: false, motivo: 'No hay extensiones permitidas configuradas' };
+    return {
+      valido: false,
+      motivo: 'No hay extensiones permitidas configuradas',
+    };
   }
   if (!blanca.includes(ext)) {
-    return { valido: false, motivo: `Extensión .${ext} no permitida para este tipo` };
+    return {
+      valido: false,
+      motivo: `Extensión .${ext} no permitida para este tipo`,
+    };
   }
   return { valido: true };
 };
 
 /** El límite se compara contra los bytes REALES recibidos, no contra el
  *  `Content-Length` que declara el cliente. */
-export const validarPeso = (bytes: number, maximoKb: number): ResultadoValidacion => {
+export const validarPeso = (
+  bytes: number,
+  maximoKb: number,
+): ResultadoValidacion => {
   if (!Number.isFinite(bytes) || bytes <= 0) {
     return { valido: false, motivo: 'Archivo vacío' };
   }
   const maximoBytes = maximoKb * 1024;
   if (bytes > maximoBytes) {
-    return { valido: false, motivo: `El archivo supera el límite de ${maximoKb} KB` };
+    return {
+      valido: false,
+      motivo: `El archivo supera el límite de ${maximoKb} KB`,
+    };
   }
   return { valido: true };
 };
@@ -133,7 +196,9 @@ export const esNombreSeguro = (nombre: string | null | undefined): boolean => {
  * construcción, y al ser estable el mismo archivo reintentado produce la misma ruta
  * — lo que hace la subida idempotente.
  */
-export const hashClaveInstancia = (clave: string | null | undefined): string => {
+export const hashClaveInstancia = (
+  clave: string | null | undefined,
+): string => {
   const valor = String(clave ?? '');
   if (valor === '') return '';
   // FNV-1a de 32 bits: sin dependencias, suficiente para distinguir filas de una
@@ -159,7 +224,8 @@ export const construirNombreArchivo = (
   extension: string,
 ): string => {
   const ext = normalizarExtension(extension);
-  if (ext === '') throw new Error('Extensión inválida al construir el nombre del archivo');
+  if (ext === '')
+    throw new Error('Extensión inválida al construir el nombre del archivo');
 
   const partes = [
     String(contexto.idEncuesta),
@@ -221,7 +287,8 @@ export const esRutaContenida = (
 
   // En Windows las rutas no distinguen mayúsculas; comparar tal cual daría falsos
   // negativos con `C:\Datos` frente a `c:\datos`.
-  const comparar = (v: string): string => (separador === '\\' ? v.toLowerCase() : v);
+  const comparar = (v: string): string =>
+    separador === '\\' ? v.toLowerCase() : v;
 
   const ruta = comparar(rutaAbsoluta);
   const base = comparar(raiz);

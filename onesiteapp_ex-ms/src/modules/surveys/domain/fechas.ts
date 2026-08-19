@@ -34,7 +34,10 @@ const tresDigitos = (n: number): string => String(n).padStart(3, '0');
  * indicada. `Intl` es la única vía en Node estándar para hacer esto sin depender de
  * la zona del proceso ni de librerías externas.
  */
-const partesEnZona = (fecha: Date, zonaHoraria: string): Record<string, string> => {
+const partesEnZona = (
+  fecha: Date,
+  zonaHoraria: string,
+): Record<string, string> => {
   const formateador = new Intl.DateTimeFormat('en-CA', {
     timeZone: zonaHoraria,
     year: 'numeric',
@@ -82,7 +85,9 @@ export function aFechaLocalSqlServer(
 }
 
 /** Momento actual en el mismo formato y zona; fallback cuando el dispositivo no envía fecha. */
-export function ahoraLocalSqlServer(zonaHoraria: string = ZONA_HORARIA_POR_DEFECTO): string {
+export function ahoraLocalSqlServer(
+  zonaHoraria: string = ZONA_HORARIA_POR_DEFECTO,
+): string {
   return aFechaLocalSqlServer(new Date().toISOString(), zonaHoraria) as string;
 }
 

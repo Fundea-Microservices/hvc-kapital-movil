@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
-import { normalizarLote, type EntradaNormalizada } from '../domain/bitacora.politicas';
+import {
+  normalizarLote,
+  type EntradaNormalizada,
+} from '../domain/bitacora.politicas';
 
 export interface ResultadoRecepcion {
   recibidas: number;
@@ -42,7 +45,7 @@ export class DiagnosticsService {
     if (entradas.length > 0) {
       this.logger.log(
         `Bitácora recibida de ${dispositivoId ?? 'dispositivo desconocido'}: ` +
-        `${resultado.guardadas} guardadas, ${resultado.descartadas} descartadas.`,
+          `${resultado.guardadas} guardadas, ${resultado.descartadas} descartadas.`,
       );
     }
 
@@ -85,7 +88,9 @@ export class DiagnosticsService {
       );
     } catch (error) {
       const detalle = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`No se pudo guardar una entrada de bitácora: ${detalle}`);
+      this.logger.warn(
+        `No se pudo guardar una entrada de bitácora: ${detalle}`,
+      );
     }
   }
 }

@@ -2,9 +2,9 @@ import { z } from 'zod';
 
 // La app enviará un objeto con las tablas y la última fecha que sincronizó
 export const SyncDeltasSchema = z.object({
-lastSyncDates: z.record(
+  lastSyncDates: z.record(
     z.string(), // La llave siempre será un string (ej. 'cat_menu')
-    z.string().datetime().nullable() // El valor será una fecha ISO o null
+    z.string().datetime().nullable(), // El valor será una fecha ISO o null
   ),
 });
 

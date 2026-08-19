@@ -1,16 +1,28 @@
-import { Controller, Post, Put, Body, UsePipes, Patch, Get, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Put,
+  Body,
+  UsePipes,
+  Patch,
+  Get,
+  Param,
+  Query,
+} from '@nestjs/common';
 import { DeviceService } from '../application/device.service';
-import { type EnrollDeviceDto, EnrollDeviceSchema } from '../domain/dtos/enroll-device.dto';
+import {
+  type EnrollDeviceDto,
+  EnrollDeviceSchema,
+} from '../domain/dtos/enroll-device.dto';
 import * as updateMetadataDto from '../domain/dtos/update-metadata.dto';
-import { ZodValidationPipe } from '../../../core/pipes/zod-validation.pipe'; 
+import { ZodValidationPipe } from '../../../core/pipes/zod-validation.pipe';
 
 @Controller('api/v1/devices')
 export class DeviceController {
   constructor(private readonly deviceService: DeviceService) {}
   @Post('enroll')
-  @UsePipes(new ZodValidationPipe(EnrollDeviceSchema)) 
+  @UsePipes(new ZodValidationPipe(EnrollDeviceSchema))
   async enrollDevice(@Body() body: EnrollDeviceDto) {
-    
     return await this.deviceService.enrolarEquipo(body);
   }
   // Nuevo Endpoint PUT para los Metadatos
@@ -22,7 +34,7 @@ export class DeviceController {
   }
   // ... (métodos POST enroll y PUT metadata)
   // SPRINT 4: Botón de Pánico desde el BackOffice
-@Patch('block/:token')
+  @Patch('block/:token')
   async blockDevice(@Param('token') token: string) {
     return await this.deviceService.darDeBaja(token);
   }
@@ -34,8 +46,8 @@ export class DeviceController {
   }
 }
 // Usamos un Pipe personalizado o validación manual para Zod
- // async enrollDevice(@Body() body: EnrollDeviceDto) {
-    // Validar esquema con Zod antes de procesar
- //   const validData = EnrollDeviceSchema.parse(body);
- //   return await this.deviceService.enrolarEquipo(validData);
- // } }
+// async enrollDevice(@Body() body: EnrollDeviceDto) {
+// Validar esquema con Zod antes de procesar
+//   const validData = EnrollDeviceSchema.parse(body);
+//   return await this.deviceService.enrolarEquipo(validData);
+// } }

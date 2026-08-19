@@ -43,14 +43,21 @@ export const MAX_CONTEXTO = 1000;
 export const MAX_VERSION = 20;
 
 const recortar = (valor: unknown, limite: number): string =>
-  String(valor ?? '').replace(/\s+/g, ' ').trim().slice(0, limite);
+  String(valor ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limite);
 
 /**
  * Normaliza el nivel. Cualquier valor desconocido cae a `ERROR`, no se descarta: una
  * entrada con el nivel mal escrito sigue siendo información sobre un fallo real.
  */
 export const normalizarNivel = (valor: unknown): NivelBitacora =>
-  String(valor ?? '').trim().toUpperCase() === 'WARN' ? 'WARN' : 'ERROR';
+  String(valor ?? '')
+    .trim()
+    .toUpperCase() === 'WARN'
+    ? 'WARN'
+    : 'ERROR';
 
 /**
  * Valida la fecha que reporta el dispositivo.
@@ -60,7 +67,10 @@ export const normalizarNivel = (valor: unknown): NivelBitacora =>
  * el servidor use su propia hora de recepción: es preferible una fecha aproximada a
  * una que ordene mal la bitácora entera. Es la misma lección del cursor de sync.
  */
-export const normalizarFecha = (valor: unknown, ahoraMs = Date.now()): string | null => {
+export const normalizarFecha = (
+  valor: unknown,
+  ahoraMs = Date.now(),
+): string | null => {
   const texto = String(valor ?? '').trim();
   if (texto === '') return null;
 
@@ -113,6 +123,6 @@ export const normalizarLote = (
 
   return cuerpo
     .slice(0, MAX_ENTRADAS_POR_LOTE)
-    .map(item => normalizarEntrada(item as EntradaRecibida, ahoraMs))
+    .map((item) => normalizarEntrada(item as EntradaRecibida, ahoraMs))
     .filter((e): e is EntradaNormalizada => e !== null);
 };
