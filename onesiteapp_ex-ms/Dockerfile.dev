@@ -1,0 +1,27 @@
+# Imagen de desarrollo para el backend NestJS (onesiteapp_ex-ms).
+# Ejecuta `nest start --watch` con hot-reload. El codigo (src/test) se monta
+# por bind-mount desde docker-compose, de modo que node_modules se resuelve
+# SIEMPRE dentro del contenedor (evita choques de modulos nativos con Windows).
+FROM node:22-bookworm-slim
+
+# Herramientas de compilacion para modulos nativos (bcrypt) por si el prebuild
+# no cubre esta plataforma. Se limpian los indices apt para no inflar la capa.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Se copian primero los manifiestos para aprovechar la cache de capas: npm ci
+# solo se reejecuta cuando cambian package.json / package-lock.json.
+COPY package*.json ./
+RUN npm ci
+
+# El resto del proyecto (nest-cli.json, tsconfig, etc.). En dev, src/ y test/
+# quedan ademas sobreescritos por el bind-mount del compose.
+COPY . .
+
+# Puerto HTTP. El valor real lo fija PORT en el .env; 3000 es el del .env.example.
+EXPOSE 3000
+
+CMD ["npm", "run", "start:dev"]
