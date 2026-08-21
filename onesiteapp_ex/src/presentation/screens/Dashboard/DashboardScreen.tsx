@@ -10,6 +10,9 @@ import { useNavigation } from '@react-navigation/native';
 
 import { useSyncMutation } from '../../hooks/useSyncMutation';
 import { useLogout } from '../../hooks/useLogout';
+import { useUnenroll } from '../../hooks/useUnenroll';
+import { DesvincularModal } from '../../components/DesvincularModal';
+import { mensajeDeError } from '../../../data/remote/types/sync.types';
 import { useAuthStore } from '../../../presentation/store/useAuthStore';
 import { BarChart } from 'react-native-chart-kit';
 import CatMenuAppex from '../../../data/local/models/CatMenu';
@@ -33,7 +36,14 @@ const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
   const navigation = useNavigation<NavegacionApp>();
   const insets = useSafeAreaInsets();
   const { executeLogout } = useLogout();
+  const { executeUnenroll } = useUnenroll();
   const nombreCompletoStore = useAuthStore(state => state.nombreCompleto);
+
+  // Desvinculación del dispositivo (acción destructiva, sin contraseña).
+  const [isUnenrollOpen, setIsUnenrollOpen] = useState(false);
+  const [unenrollError, setUnenrollError] = useState('');
+  const [unenrollLoading, setUnenrollLoading] = useState(false);
+  const [pendientesMultimedia, setPendientesMultimedia] = useState(0);
 
   // Clientes con la gestión cancelada/eliminada (estado_gestion === 2) no deben contarse en las métricas
   const idsClientesEliminados = new Set(
@@ -155,6 +165,30 @@ const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
     // memoria) para que al reabrir la app NO se re-loguee con un token huérfano.
     void executeLogout();
     setIsMenuOpen(false);
+  };
+
+  // Capturas de encuesta sin subir: pendientes (0) o pausadas (-1). Se perderían con el wipe.
+  const capturasSinSubir = capturas.filter(c => c.estado_sincro <= 0).length;
+
+  const abrirDesvincular = async () => {
+    setUnenrollError('');
+    const n = await contarPendientesDeSubida().catch(() => 0);
+    setPendientesMultimedia(n);
+    setIsMenuOpen(false);
+    setIsUnenrollOpen(true);
+  };
+
+  const handleDesvincular = async () => {
+    setUnenrollError('');
+    setUnenrollLoading(true);
+    try {
+      // Autoritativo: solo tras el OK del backend se hace el wipe.
+      await executeUnenroll();
+      // Éxito: wipeData() ya disparó el gate a Enrollment; esta pantalla se desmonta.
+    } catch (error) {
+      setUnenrollError(mensajeDeError(error, 'No se pudo desvincular el dispositivo'));
+      setUnenrollLoading(false);
+    }
   };
 
   // Carga el nombre, el usuario y la empresa desde el almacenamiento seguro.
@@ -535,11 +569,31 @@ const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
                 <Feather name="log-out" size={18} color="#EF4444" />
                 <Text className="ml-3 text-red-600 font-bold text-sm">Cerrar Sesión</Text>
               </TouchableOpacity>
+
+              {/* Acción destructiva de menor frecuencia: desvincula el equipo (des-enrola). */}
+              <TouchableOpacity
+                className="flex-row items-center justify-center py-3 mt-1 active:opacity-70"
+                onPress={abrirDesvincular}
+              >
+                <Feather name="slash" size={14} color="#9CA3AF" />
+                <Text className="ml-2 text-gray-400 font-semibold text-xs">Desvincular dispositivo</Text>
+              </TouchableOpacity>
             </View>
           </View>
           <TouchableOpacity className="flex-1" activeOpacity={1} onPress={() => setIsMenuOpen(false)} />
         </View>
       </Modal>
+
+      {/* MODAL DE DESVINCULACIÓN (destructivo, exige contraseña) */}
+      <DesvincularModal
+        visible={isUnenrollOpen}
+        error={unenrollError}
+        loading={unenrollLoading}
+        capturasSinSubir={capturasSinSubir}
+        pendientesMultimedia={pendientesMultimedia}
+        onConfirmar={handleDesvincular}
+        onCancelar={() => setIsUnenrollOpen(false)}
+      />
 
       {/* MODAL DE SINCRONIZACIÓN BLOQUEANTE */}
       <Modal visible={isSyncing} transparent animationType="fade">

@@ -5,19 +5,34 @@ import { useMutation } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 
+import { Q } from '@nozbe/watermelondb';
+
 import { loginApi, getPermisosApi } from '../../../data/remote/auth.api';
 import { useAuthStore } from '../../store/useAuthStore';
 import { authLocalService } from '../../../data/local/services/authLocalService';
 import { runFullSync } from '../../../data/local/services/syncManager';
 import { mensajeDeError } from '../../../data/remote/types/sync.types';
+import { useUnenroll } from '../../hooks/useUnenroll';
+import { DesvincularModal } from '../../components/DesvincularModal';
+import { contarPendientesDeSubida } from '../../../data/local/services/multimedia.service';
+import { database } from '../../../data/local/database';
 
 type LoginModalState = 'none' | 'syncing' | 'error';
 
 export const LoginScreen = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [verPassword, setVerPassword] = useState(false);
   const [modalState, setModalState] = useState<LoginModalState>('none');
   const [errorMessage, setErrorMessage] = useState('Credenciales incorrectas');
+
+  // Desvinculación del dispositivo desde el Login (sin sesión, sin contraseña).
+  const { executeUnenroll } = useUnenroll();
+  const [isUnenrollOpen, setIsUnenrollOpen] = useState(false);
+  const [unenrollError, setUnenrollError] = useState('');
+  const [unenrollLoading, setUnenrollLoading] = useState(false);
+  const [capturasSinSubir, setCapturasSinSubir] = useState(0);
+  const [pendientesMultimedia, setPendientesMultimedia] = useState(0);
 
   // Extraemos las funciones del store de forma segura
   const setLoggedIn = useAuthStore((state) => state.setLoggedIn);
@@ -98,6 +113,35 @@ export const LoginScreen = () => {
     loginMutation.mutate();
   };
 
+  const abrirDesvincular = async () => {
+    setUnenrollError('');
+    // Conteos de datos que se perderían con el wipe (para advertir).
+    const [multimedia, capturas] = await Promise.all([
+      contarPendientesDeSubida().catch(() => 0),
+      database.collections
+        .get('local_captura')
+        .query(Q.where('estado_sincro', Q.lte(0)))
+        .fetchCount()
+        .catch(() => 0),
+    ]);
+    setPendientesMultimedia(multimedia);
+    setCapturasSinSubir(capturas);
+    setIsUnenrollOpen(true);
+  };
+
+  const handleDesvincular = async () => {
+    setUnenrollError('');
+    setUnenrollLoading(true);
+    try {
+      // Autoritativo: solo tras el OK del backend se hace el wipe. Éxito → wipeData()
+      // dispara el gate a Enrollment y esta pantalla se desmonta.
+      await executeUnenroll();
+    } catch (error) {
+      setUnenrollError(mensajeDeError(error, 'No se pudo desvincular el dispositivo'));
+      setUnenrollLoading(false);
+    }
+  };
+
   // --- ELIMINADA LA FUNCIÓN handleLogin DUPLICADA QUE CAUSABA ERROR ---
 
   return (
@@ -151,13 +195,22 @@ export const LoginScreen = () => {
 
               <View className="mb-8">
                 <Text className="text-gray-600 mb-2 font-semibold ml-1">Contraseña</Text>
-                <TextInput
-                  className="bg-[#F9FAFB] border border-gray-200 rounded-2xl p-4 text-gray-800 text-base"
-                  placeholder="Ingrese su contraseña"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                />
+                <View className="flex-row items-center bg-[#F9FAFB] border border-gray-200 rounded-2xl pr-4">
+                  <TextInput
+                    className="flex-1 p-4 text-gray-800 text-base"
+                    placeholder="Ingrese su contraseña"
+                    value={password}
+                    onChangeText={setPassword}
+                    autoCapitalize="none"
+                    secureTextEntry={!verPassword}
+                  />
+                  <TouchableOpacity
+                    onPress={() => setVerPassword((v) => !v)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Feather name={verPassword ? 'eye-off' : 'eye'} size={20} color="#6B7280" />
+                  </TouchableOpacity>
+                </View>
               </View>
 
               <TouchableOpacity
@@ -170,6 +223,15 @@ export const LoginScreen = () => {
                 </Text>
               </TouchableOpacity>
             </View>
+
+            {/* Desvinculación del equipo (p. ej. equipo mal enrolado). No requiere sesión. */}
+            <TouchableOpacity
+              className="mt-6 items-center active:opacity-70"
+              onPress={abrirDesvincular}
+            >
+              <Text className="text-gray-400 text-xs">¿Equipo equivocado?</Text>
+              <Text className="text-[#1E3A8A] text-sm font-semibold mt-0.5">Desvincular dispositivo</Text>
+            </TouchableOpacity>
           </View>
       </TouchableWithoutFeedback>
 
@@ -197,6 +259,16 @@ export const LoginScreen = () => {
           )}
         </View>
       </Modal>
+
+      <DesvincularModal
+        visible={isUnenrollOpen}
+        error={unenrollError}
+        loading={unenrollLoading}
+        capturasSinSubir={capturasSinSubir}
+        pendientesMultimedia={pendientesMultimedia}
+        onConfirmar={handleDesvincular}
+        onCancelar={() => setIsUnenrollOpen(false)}
+      />
 
     </KeyboardAwareScrollView>
   );

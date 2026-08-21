@@ -8,6 +8,8 @@ import {
   Get,
   Param,
   Query,
+  Headers,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { DeviceService } from '../application/device.service';
 import {
@@ -37,6 +39,16 @@ export class DeviceController {
   @Patch('block/:token')
   async blockDevice(@Param('token') token: string) {
     return await this.deviceService.darDeBaja(token);
+  }
+
+  // SPRINT 13: Desvinculación self-service (Login o Dashboard). NO autenticada: se
+  // autoriza con el device token del equipo enrolado (lo inyecta el interceptor).
+  @Post('unenroll')
+  async unenrollDevice(@Headers('x-device-token') deviceToken: string) {
+    if (!deviceToken) {
+      throw new UnauthorizedException('DeviceToken es requerido');
+    }
+    return await this.deviceService.desvincular(deviceToken);
   }
   // SPRINT 4: Validación de versión de la App
   // Validación de versión de la App (Middleware/Guard opcional en el futuro)

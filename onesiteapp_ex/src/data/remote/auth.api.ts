@@ -127,3 +127,12 @@ export const cambiarPasswordApi = async (
   });
   return response.data;
 };
+
+// 6. Desvincular dispositivo. NO autenticada: se autoriza con el device token del
+// equipo enrolado, que el interceptor de request inyecta como `x-device-token`. Por eso
+// funciona también desde la pantalla de Login (sin sesión). Es autoritativa: si el
+// backend rechaza, lanza y NO se debe borrar nada local.
+export const desvincularDispositivoApi = async (): Promise<{ message: string }> => {
+  const response = await apiClient.post<{ message: string }>('/devices/unenroll');
+  return response.data;
+};

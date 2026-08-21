@@ -108,7 +108,7 @@ export class DeviceService {
   async darDeBaja(deviceToken: string) {
     // 1. Verificamos que el dispositivo exista
     const dispositivo = await this.dataSource.query(
-      `SELECT IdDispositivo FROM Dispositivos WHERE DeviceToken = @0`,
+      `SELECT IdDispositivo FROM Dispositivos_AppEx WHERE DeviceToken = @0`,
       [deviceToken],
     );
 
@@ -119,8 +119,8 @@ export class DeviceService {
     // 2. Bloqueo administrativo (Estado = 0)
     // El Trigger de SQL Server actualizará Control_Versiones automáticamente
     await this.dataSource.query(
-      `UPDATE Dispositivos 
-       SET Estado = 0, FechaModificacion = GETDATE() 
+      `UPDATE Dispositivos_AppEx
+       SET Estado = 0, FechaModificacion = GETDATE()
        WHERE DeviceToken = @0`,
       [deviceToken],
     );
@@ -128,8 +128,8 @@ export class DeviceService {
     // 3. Regla Crítica 4.5: Bloqueo de hardware superior a sesión
     // Por seguridad extrema, también invalidamos cualquier sesión activa de este equipo
     await this.dataSource.query(
-      `UPDATE Sesiones 
-       SET Activa = 0 
+      `UPDATE Sesiones_AppEx
+       SET Activa = 0
        WHERE IdDispositivo = @0`,
       [dispositivo[0].IdDispositivo],
     );
@@ -138,6 +138,39 @@ export class DeviceService {
       message:
         'Dispositivo bloqueado exitosamente. Se ejecutará Wipe en su próxima petición.',
     };
+  }
+
+  /**
+   * Desvinculación self-service del dispositivo (desde Login o Dashboard).
+   *
+   * NO autenticada: se autoriza por posesión del `deviceToken` del equipo enrolado (a
+   * diferencia del bloqueo admin `darDeBaja`, que lo dispara el BackOffice). Desliga el
+   * equipo de la empresa (`IdEmpresa = NULL`) para permitir reasignarlo/re-enrolarlo, e
+   * invalida todas sus sesiones. NO pone `Estado = 0`: eso bloquearía el re-enrolamiento
+   * del mismo hardware (`enrolarEquipo` rechaza los dispositivos con `Estado = 0`).
+   */
+  async desvincular(deviceToken: string) {
+    const dispositivo = await this.dataSource.query(
+      `SELECT IdDispositivo FROM Dispositivos_AppEx WHERE DeviceToken = @0`,
+      [deviceToken],
+    );
+
+    if (!dispositivo.length) {
+      throw new NotFoundException('Dispositivo no encontrado');
+    }
+
+    const idDispositivo = dispositivo[0].IdDispositivo;
+
+    await this.dataSource.query(
+      `UPDATE Dispositivos_AppEx SET IdEmpresa = NULL, FechaModificacion = GETDATE() WHERE IdDispositivo = @0`,
+      [idDispositivo],
+    );
+    await this.dataSource.query(
+      `UPDATE Sesiones_AppEx SET Activa = 0 WHERE IdDispositivo = @0`,
+      [idDispositivo],
+    );
+
+    return { message: 'Dispositivo desvinculado correctamente' };
   }
 
   // SPRINT 4: Método 4.1 - VerificarVersion (GET)

@@ -1,0 +1,84 @@
+import React from 'react';
+import { View, Text, TouchableOpacity, Modal } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+
+/**
+ * Modal de confirmación de desvinculación del dispositivo (acción destructiva).
+ *
+ * Es un componente PRESENTACIONAL puro: no conoce la red ni el store, solo recibe el
+ * estado y emite callbacks. Así se prueba en aislamiento (sin renderizar el Dashboard
+ * entero, que arrastra WatermelonDB y gráficos). La desvinculación NO pide contraseña;
+ * el mensaje de error (de red/servidor) se verifica aquí y la lógica de wipe vive en
+ * `useUnenroll`.
+ */
+export interface DesvincularModalProps {
+  visible: boolean;
+  error: string;
+  loading: boolean;
+  /** Capturas de encuesta sin subir (pendientes o pausadas) que se perderían. */
+  capturasSinSubir: number;
+  /** Archivos multimedia pendientes de subida que se perderían. */
+  pendientesMultimedia: number;
+  onConfirmar: () => void;
+  onCancelar: () => void;
+}
+
+export const DesvincularModal = ({
+  visible,
+  error,
+  loading,
+  capturasSinSubir,
+  pendientesMultimedia,
+  onConfirmar,
+  onCancelar,
+}: DesvincularModalProps) => {
+  const hayPendientes = capturasSinSubir > 0 || pendientesMultimedia > 0;
+
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <View className="flex-1 bg-black/50 items-center justify-center px-6">
+        <View className="bg-white w-full max-w-[340px] rounded-[32px] p-7 shadow-2xl">
+          <View className="items-center mb-4">
+            <View className="bg-[#EF4444] w-16 h-16 rounded-full items-center justify-center mb-4">
+              <Feather name="alert-triangle" size={30} color="white" />
+            </View>
+            <Text className="text-lg font-bold text-gray-800 text-center">Desvincular este dispositivo</Text>
+          </View>
+
+          <Text className="text-gray-500 text-sm text-center mb-3">
+            Se borrarán TODOS los datos locales y el equipo volverá a la pantalla de enrolamiento.
+          </Text>
+
+          {hayPendientes && (
+            <View className="bg-red-50 rounded-2xl p-3 mb-3">
+              <Text className="text-red-600 text-xs font-semibold text-center">
+                ⚠ Tienes {capturasSinSubir} captura(s) y {pendientesMultimedia} archivo(s) sin subir. Se perderán.
+              </Text>
+            </View>
+          )}
+
+          {error !== '' && (
+            <Text className="text-red-500 text-xs mb-2 text-center">{error}</Text>
+          )}
+
+          <View className="flex-row mt-2" style={{ gap: 12 }}>
+            <TouchableOpacity
+              className="flex-1 rounded-2xl py-4 items-center bg-gray-100"
+              onPress={onCancelar}
+              disabled={loading}
+            >
+              <Text className="text-gray-700 font-bold">Cancelar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              className={`flex-1 rounded-2xl py-4 items-center ${loading ? 'bg-gray-400' : 'bg-[#EF4444]'}`}
+              onPress={onConfirmar}
+              disabled={loading}
+            >
+              <Text className="text-white font-bold">{loading ? 'Desvinculando...' : 'Desvincular'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
