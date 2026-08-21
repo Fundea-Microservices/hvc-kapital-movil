@@ -82,6 +82,16 @@ export class AuthService {
     const fechaExpiracion = new Date();
     fechaExpiracion.setDate(fechaExpiracion.getDate() + 15); // +15 días
 
+    // SESIÓN ÚNICA POR USUARIO ("el nuevo login toma posesión"): antes de crear la
+    // sesión nueva se invalidan TODAS las demás sesiones activas del usuario (en
+    // cualquier dispositivo). Así solo queda una activa. El equipo viejo no se expulsa
+    // al instante —el access token es stateless— sino cuando su JWT caduque y falle el
+    // refresh (`refrescarToken` valida `Activa`).
+    await this.dataSource.query(
+      `UPDATE Sesiones_AppEx SET Activa = 0 WHERE IdUsuario = @0 AND Activa = 1`,
+      [usuario[0].IdUsuario],
+    );
+
     // Guardamos la sesión en la base de datos
     await this.dataSource.query(
       `INSERT INTO Sesiones_AppEx (IdUsuario, IdDispositivo, RefreshToken, FechaExpiracion, Activa)

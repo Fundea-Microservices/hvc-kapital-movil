@@ -207,7 +207,7 @@ const responseInterceptorInterceptor = async (error: unknown) => {
   if (error.response?.status === 401 && !originalRequest._retry) {
     
     // Se omiten rutas críticas de autenticación inicial para evitar bucles ciclistas
-    const excludedUrls = ['/auth/login', '/devices/enroll'];
+    const excludedUrls = ['/auth/login', '/devices/enroll', '/devices/unenroll'];
     if (excludedUrls.includes(originalRequest.url ?? '')) {
       return Promise.reject(error);
     }
@@ -244,8 +244,17 @@ const responseInterceptorInterceptor = async (error: unknown) => {
 
     } catch (refreshError) {
       processQueue(refreshError, null);
-      console.warn('Sesión corrupta o expirada. Ejecutando salida elegante...');
-      useAuthStore.getState().wipeData(); 
+      console.warn('Sesión inválida o expirada (o tomada por otro dispositivo). Volviendo al login...');
+      // Se limpia SOLO la sesión y se CONSERVA el enrolamiento → el gate cae a Login,
+      // no a Enrollment. Antes se llamaba wipeData(), que des-enrolaba el equipo y
+      // obligaba a re-enrolar tras una simple expiración o "toma de posesión" de sesión.
+      await SecureStore.deleteItemAsync('token_sesion');
+      await SecureStore.deleteItemAsync('refresh_token');
+      await SecureStore.deleteItemAsync('user_id');
+      await SecureStore.deleteItemAsync('user_name');
+      await SecureStore.deleteItemAsync('nombre_completo');
+      await SecureStore.deleteItemAsync('requiere_cambio_password');
+      useAuthStore.getState().logout();
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;
@@ -265,10 +274,11 @@ const responseInterceptorInterceptor = async (error: unknown) => {
       // Destrucción inmediata de banderas en el SecureStore
       await SecureStore.deleteItemAsync('deviceToken');
       await SecureStore.deleteItemAsync('isEnrolled');
+      await SecureStore.deleteItemAsync('company_name');
       await SecureStore.deleteItemAsync('token_sesion');
       await SecureStore.deleteItemAsync('refresh_token');
       await SecureStore.deleteItemAsync('user_id');
-      
+
       // Limpieza del estado global en memoria RAM
       useAuthStore.getState().wipeData();
       Alert.alert('Equipo Bloqueado', 'Este dispositivo ha sido dado de baja. Contacte al administrador.');
