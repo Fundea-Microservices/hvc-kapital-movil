@@ -12,8 +12,11 @@ import type { RouteProp } from '@react-navigation/native';
 export type RootStackParamList = {
   Enrollment: undefined;
   Login: undefined;
-  /** Cambio obligatorio de contraseña al primer ingreso; no recibe parámetros. */
-  CambioPassword: undefined;
+  /**
+   * Cambio de contraseña. Sin params (o `voluntario: false`) = obligatorio de primer
+   * ingreso (gate). `voluntario: true` = abierto desde el menú Perfil, con botón atrás.
+   */
+  CambioPassword: { voluntario?: boolean } | undefined;
   Dashboard: undefined;
   SurveyClients: {
     idEncuesta: string;

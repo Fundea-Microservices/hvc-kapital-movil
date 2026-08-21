@@ -138,6 +138,9 @@ export default function App() {
               <Stack.Screen name="Dashboard" component={DashboardScreen} />
               <Stack.Screen name="SurveyClients" component={SurveyClientsScreen} />
               <Stack.Screen name="DynamicSurvey" component={DynamicSurveyScreen} />
+              {/* Cambio VOLUNTARIO desde el menú Perfil. Mismo componente que el gate
+                  obligatorio, pero aquí se abre con { voluntario: true } y botón atrás. */}
+              <Stack.Screen name="CambioPassword" component={CambioPasswordScreen} />
             </Stack.Group>
           )}
 

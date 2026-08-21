@@ -12,13 +12,25 @@ import {
 import * as SecureStore from 'expo-secure-store';
 import { Feather } from '@expo/vector-icons';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { useAuthStore } from '../../store/useAuthStore';
 import { useCambiarPasswordMutation } from '../../hooks/useCambiarPasswordMutation';
 import { evaluarPolitica, type ResultadoPolitica } from '../../../domain/validacion/politicaPassword';
 import { mensajeDeError } from '../../../data/remote/types/sync.types';
+import type { RootStackParamList } from '../../navigation/types';
 
 type ModalState = 'none' | 'syncing' | 'success' | 'error';
+
+/**
+ * Props opcionales del navigator. Se declaran `Partial` a propósito: la pantalla se
+ * usa en DOS modos y el spec la renderiza sin navegador. Sin `route` (modo por
+ * defecto) es el cambio OBLIGATORIO de primer ingreso; con `route.params.voluntario`
+ * es el cambio VOLUNTARIO desde el menú Perfil (con botón atrás y sin tocar la bandera
+ * de primer ingreso).
+ */
+type Props = Partial<NativeStackScreenProps<RootStackParamList, 'CambioPassword'>>;
 
 // Azul institucional: se usa tanto en el primario como en los indicadores cumplidos.
 const AZUL = '#1E3A8A';
@@ -71,7 +83,13 @@ const CampoPassword = ({
   </View>
 );
 
-export const CambioPasswordScreen = () => {
+export const CambioPasswordScreen = ({ navigation, route }: Props = {}) => {
+  // Modo voluntario: viene por params solo cuando se abre desde el menú Perfil.
+  const voluntario = route?.params?.voluntario ?? false;
+  // Inset superior: el botón atrás va posicionado absoluto y debe quedar por debajo
+  // del status bar/notch (esta pantalla no usa SafeAreaView).
+  const insets = useSafeAreaInsets();
+
   const [passwordActual, setPasswordActual] = useState('');
   const [passwordNueva, setPasswordNueva] = useState('');
   const [confirmarPassword, setConfirmarPassword] = useState('');
@@ -109,9 +127,16 @@ export const CambioPasswordScreen = () => {
     );
   };
 
-  // Éxito: se libera el gate borrando la bandera en SecureStore (fuente de verdad que
-  // sobrevive reinicios) y en el store; App.tsx re-renderiza y cae al Dashboard.
   const onContinuar = async () => {
+    if (voluntario) {
+      // Cambio voluntario: el usuario ya estaba dentro. NO se toca la bandera de primer
+      // ingreso (podría no existir); solo se vuelve al Dashboard con la pila de navegación.
+      setModalState('none');
+      navigation?.goBack();
+      return;
+    }
+    // Primer ingreso: se libera el gate borrando la bandera en SecureStore (fuente de
+    // verdad que sobrevive reinicios) y en el store; App.tsx re-renderiza y cae al Dashboard.
     await SecureStore.deleteItemAsync('requiere_cambio_password');
     setModalState('none');
     limpiarCambioPassword();
@@ -127,26 +152,42 @@ export const CambioPasswordScreen = () => {
       extraScrollHeight={20}
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <View className="flex-1 items-center justify-center px-6 py-10">
-          <View className="items-center mb-8">
+        <View className="flex-1 items-center justify-center px-6 py-10 ">
+          {/* Botón atrás: solo en modo voluntario. En el obligatorio la pantalla es una
+              barrera sin salida hasta completar el cambio. */}
+          {voluntario && (
+            <TouchableOpacity
+              onPress={() => navigation?.goBack()}
+              style={{ top: insets.top + 8 }}
+              className="absolute left-4 z-10 flex-row items-center py-2"
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Feather name="arrow-left" size={24} color="#1E3A8A" />
+              <Text className="text-[#1E3A8A] font-semibold ml-1">Volver</Text>
+            </TouchableOpacity>
+          )}
+
+          <View className="items-center mb-8 ">
             <View className="w-20 h-20 rounded-full bg-[#1E3A8A] items-center justify-center mb-4 shadow-md">
               <Feather name="lock" size={36} color="white" />
             </View>
             <Text className="text-[#1E3A8A] text-2xl font-bold">Actualiza tu contraseña</Text>
             <Text className="text-gray-500 text-center mt-2 px-4">
               {nombreCompleto ? `Hola, ${nombreCompleto}. ` : ''}
-              Por seguridad, define una nueva contraseña para tu primer ingreso.
+              {voluntario
+                ? 'Ingresa tu contraseña actual y define una nueva.'
+                : 'Por seguridad, define una nueva contraseña para tu primer ingreso.'}
             </Text>
           </View>
 
-          <View className="bg-white w-full max-w-sm rounded-[32px] p-8 shadow-2xl elevation-5">
+          <View className="bg-white w-full max-w-sm rounded-[32px] p-8 shadow-2xl elevation-5 border-2 border-orange-100">
             <CampoPassword
-              etiqueta="Contraseña actual (temporal)"
+              etiqueta={voluntario ? 'Contraseña actual' : 'Contraseña actual (temporal)'}
               valor={passwordActual}
               onChangeText={setPasswordActual}
               visible={verActual}
               onToggle={() => setVerActual((v) => !v)}
-              placeholder="Ingrese su contraseña temporal"
+              placeholder="Ingrese su contraseña actual"
             />
             <CampoPassword
               etiqueta="Nueva contraseña"
@@ -165,6 +206,16 @@ export const CambioPasswordScreen = () => {
               placeholder="Repita su nueva contraseña"
             />
 
+            <TouchableOpacity
+              className={`rounded-2xl py-4 items-center shadow-lg ${politica.esValida ? 'bg-[#1E3A8A]' : 'bg-gray-400'}`}
+              onPress={onPressGuardar}
+              disabled={!politica.esValida || mutation.isPending}
+            >
+              <Text className="text-white font-bold text-lg">
+                {mutation.isPending ? 'Guardando...' : 'Guardar contraseña'}
+              </Text>
+            </TouchableOpacity>
+
             <View className="mb-6 mt-1">
               <Text className="text-gray-500 mb-2 font-semibold ml-1">Tu contraseña debe cumplir:</Text>
               <ReglaItem cumple={politica.longitud} texto="Entre 8 y 20 caracteres" />
@@ -176,15 +227,7 @@ export const CambioPasswordScreen = () => {
               <ReglaItem cumple={politica.distintaDeActual} texto="Distinta a la actual" />
             </View>
 
-            <TouchableOpacity
-              className={`rounded-2xl py-4 items-center shadow-lg ${politica.esValida ? 'bg-[#1E3A8A]' : 'bg-gray-400'}`}
-              onPress={onPressGuardar}
-              disabled={!politica.esValida || mutation.isPending}
-            >
-              <Text className="text-white font-bold text-lg">
-                {mutation.isPending ? 'Guardando...' : 'Guardar contraseña'}
-              </Text>
-            </TouchableOpacity>
+            
           </View>
         </View>
       </TouchableWithoutFeedback>
@@ -203,7 +246,9 @@ export const CambioPasswordScreen = () => {
               </View>
               <Text className="text-xl font-bold text-gray-800 mb-2 text-center">¡Contraseña actualizada!</Text>
               <Text className="text-gray-500 text-center mb-8">
-                Tu nueva contraseña quedó registrada. Ya puedes usar la aplicación.
+                {voluntario
+                  ? 'Tu contraseña se cambió correctamente.'
+                  : 'Tu nueva contraseña quedó registrada. Ya puedes usar la aplicación.'}
               </Text>
               <TouchableOpacity
                 className="bg-[#1E3A8A] w-full rounded-2xl py-4 items-center"

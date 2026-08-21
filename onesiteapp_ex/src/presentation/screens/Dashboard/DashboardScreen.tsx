@@ -9,6 +9,7 @@ import { Q } from '@nozbe/watermelondb';
 import { useNavigation } from '@react-navigation/native';
 
 import { useSyncMutation } from '../../hooks/useSyncMutation';
+import { useLogout } from '../../hooks/useLogout';
 import { useAuthStore } from '../../../presentation/store/useAuthStore';
 import { BarChart } from 'react-native-chart-kit';
 import CatMenuAppex from '../../../data/local/models/CatMenu';
@@ -31,7 +32,7 @@ interface Props {
 const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
   const navigation = useNavigation<NavegacionApp>();
   const insets = useSafeAreaInsets();
-  const logoutAction = useAuthStore(state => state.logout);
+  const { executeLogout } = useLogout();
   const nombreCompletoStore = useAuthStore(state => state.nombreCompleto);
 
   // Clientes con la gestión cancelada/eliminada (estado_gestion === 2) no deben contarse en las métricas
@@ -74,6 +75,30 @@ const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
 
   const menuVisible = menuItems.filter(tienePermisoMenu);
   const itemsRaiz = menuVisible.filter(item => !item.id_padre);
+
+  /**
+   * Dispatcher de navegación de los ítems HIJO del drawer. Traduce `ruta_pantalla`
+   * (definido en el BackOffice, p. ej. `/cambio_password`) a una acción de navegación.
+   * Antes los hijos eran puramente decorativos (sin onPress); esto habilita la
+   * navegación data-driven para todos. Una ruta no mapeada es un no-op deliberado
+   * (mantiene el comportamiento previo para ítems que el BackOffice aún no conecta).
+   */
+  const RUTAS_MENU_NAVEGABLES = ['/cambio_password'];
+  const esRutaNavegable = (ruta?: string | null): boolean =>
+    RUTAS_MENU_NAVEGABLES.includes((ruta || '').trim().toLowerCase());
+
+  const navegarPorRutaMenu = (ruta?: string | null): void => {
+    switch ((ruta || '').trim().toLowerCase()) {
+      case '/cambio_password':
+        setIsMenuOpen(false);
+        navigation.navigate('CambioPassword', { voluntario: true });
+        return;
+      default:
+        // Ruta no conectada aún (p. ej. la vista "Información del usuario" del
+        // BackOffice): no se navega, se conserva el comportamiento decorativo.
+        return;
+    }
+  };
 
   //Casteo estricto para evitar fallos de SQLite (String vs Number)
   const capturasFiltradas = capturasValidas.filter(c => c.uuid_instancia && c.uuid_instancia.trim() !== '');
@@ -126,7 +151,9 @@ const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
   };
 
   const handleCerrarSesion = () => {
-    logoutAction();
+    // executeLogout borra las claves de sesión de SecureStore (no solo el estado en
+    // memoria) para que al reabrir la app NO se re-loguee con un token huérfano.
+    void executeLogout();
     setIsMenuOpen(false);
   };
 
@@ -445,8 +472,19 @@ const Dashboard = ({ menuItems, encuestas, capturas, clientes, }: Props) => {
                     {expandedId === padre.id && tieneHijos && (
                       <View className="ml-8 mt-1 border-l-2 border-gray-100 pl-2">
                         {hijosBD.map(hijo => (
-                          <TouchableOpacity key={hijo.id} className="py-2.5 px-4 rounded-lg active:bg-gray-50">
-                            <Text className="text-gray-600 text-sm font-medium">{hijo.titulo}</Text>
+                          <TouchableOpacity
+                            key={hijo.id}
+                            activeOpacity={0.7}
+                            className="py-2.5 px-4 rounded-lg active:bg-gray-50 flex-row items-center justify-between"
+                            onPress={() => navegarPorRutaMenu(hijo.ruta_pantalla)}
+                          >
+                            <View className="flex-row items-center flex-1">
+                              {hijo.icono && <Feather name={hijo.icono as any} size={14} color="#4B5563" />}
+                              <Text className={`text-gray-600 text-sm font-medium ${hijo.icono ? 'ml-3' : ''}`} numberOfLines={1}>{hijo.titulo}</Text>
+                            </View>
+                            {esRutaNavegable(hijo.ruta_pantalla) && (
+                              <Feather name="chevron-right" size={14} color="#9CA3AF" />
+                            )}
                           </TouchableOpacity>
                         ))}
 

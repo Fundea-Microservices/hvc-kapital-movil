@@ -30,13 +30,16 @@ jest.mock('../../../data/remote/auth.api', () => ({
   cambiarPasswordApi: jest.fn(),
 }));
 
-// SecureStore solo se toca en el camino de éxito (borra la bandera). No es objeto de
-// esta prueba, así que se neutraliza.
+// SecureStore solo se toca en el camino de éxito del modo OBLIGATORIO (borra la
+// bandera). Se neutraliza para poder aseverar que el modo voluntario NO lo llama.
 jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn(async () => undefined),
 }));
 
+import * as SecureStore from 'expo-secure-store';
+
 const mockCambiar = cambiarPasswordApi as jest.MockedFunction<typeof cambiarPasswordApi>;
+const mockBorrarFlag = SecureStore.deleteItemAsync as jest.MockedFunction<typeof SecureStore.deleteItemAsync>;
 
 const renderPantalla = () => {
   const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
@@ -47,9 +50,24 @@ const renderPantalla = () => {
   );
 };
 
+// Render en modo VOLUNTARIO: se pasan `route` con el flag y un `navigation` mock.
+const renderVoluntario = () => {
+  const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+  const goBack = jest.fn();
+  const utils = render(
+    <QueryClientProvider client={client}>
+      <CambioPasswordScreen
+        route={{ params: { voluntario: true } } as never}
+        navigation={{ goBack } as never}
+      />
+    </QueryClientProvider>
+  );
+  return { ...utils, goBack };
+};
+
 // Rellena los tres campos con una combinación que cumple las siete reglas.
 const llenarValido = () => {
-  fireEvent.changeText(screen.getByPlaceholderText('Ingrese su contraseña temporal'), 'Temporal1!');
+  fireEvent.changeText(screen.getByPlaceholderText('Ingrese su contraseña actual'), 'Temporal1!');
   fireEvent.changeText(screen.getByPlaceholderText('Ingrese su nueva contraseña'), 'Segura2026#');
   fireEvent.changeText(screen.getByPlaceholderText('Repita su nueva contraseña'), 'Segura2026#');
 };
@@ -68,7 +86,7 @@ describe('CambioPasswordScreen — el botón como barrera', () => {
     renderPantalla();
     // Solo se llena la actual: la nueva queda vacía, la política falla y el botón está
     // deshabilitado, así que pulsarlo no debe disparar la petición.
-    fireEvent.changeText(screen.getByPlaceholderText('Ingrese su contraseña temporal'), 'Temporal1!');
+    fireEvent.changeText(screen.getByPlaceholderText('Ingrese su contraseña actual'), 'Temporal1!');
     fireEvent.press(screen.getByText('Guardar contraseña'));
     expect(mockCambiar).not.toHaveBeenCalled();
   });
@@ -111,5 +129,31 @@ describe('CambioPasswordScreen — éxito', () => {
     fireEvent.press(screen.getByText('Guardar contraseña'));
 
     await waitFor(() => expect(screen.getByText('¡Contraseña actualizada!')).toBeTruthy());
+  });
+});
+
+describe('CambioPasswordScreen — modo voluntario (desde Perfil)', () => {
+  it('muestra el botón atrás, que no existe en el modo obligatorio', () => {
+    renderVoluntario();
+    expect(screen.getByText('Volver')).toBeTruthy();
+  });
+
+  it('el modo obligatorio NO muestra botón atrás (es una barrera)', () => {
+    renderPantalla();
+    expect(screen.queryByText('Volver')).toBeNull();
+  });
+
+  it('al confirmar el éxito vuelve atrás y NO borra la bandera de primer ingreso', async () => {
+    mockCambiar.mockResolvedValueOnce({ message: 'Contraseña actualizada correctamente' });
+    const { goBack } = renderVoluntario();
+    llenarValido();
+    fireEvent.press(screen.getByText('Guardar contraseña'));
+
+    await waitFor(() => expect(screen.getByText('¡Contraseña actualizada!')).toBeTruthy());
+    fireEvent.press(screen.getByText('Continuar'));
+
+    await waitFor(() => expect(goBack).toHaveBeenCalledTimes(1));
+    // La bandera de primer ingreso es ajena a este flujo: no debe tocarse.
+    expect(mockBorrarFlag).not.toHaveBeenCalled();
   });
 });
