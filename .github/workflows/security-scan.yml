@@ -60,7 +60,7 @@ jobs:
 
       - name: Subir SARIF a GitHub Code Scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@fc7e4f284366630b4f6f1eda706c0dd6f6b3b596  # v3.28.x
+        uses: github/codeql-action/upload-sarif@6f5948dfacef28e207b48d0905cf90c03365536d  # v3.37.9
         with:
           sarif_file: semgrep-results.sarif
 
