@@ -83,7 +83,10 @@ export const aplicarCalculos = (
           : [null];
 
         contextos.forEach(uuidFila => {
-          let formulaStr = exprBase;
+          // Se acumula token -> valor y se sustituye TODO en una sola pasada con un
+          // literal, en vez de construir un `new RegExp` por token. Además de quitar
+          // la construcción dinámica de regex, evita recorrer la fórmula N veces.
+          const valorPorToken: Record<string, string> = {};
           let puedeCalcular = true;
 
           tokens.forEach(token => {
@@ -110,9 +113,17 @@ export const aplicarCalculos = (
             if (Number.isNaN(parseado)) {
               puedeCalcular = false;
             } else {
-              formulaStr = formulaStr.replace(new RegExp(`\\b${token}\\b`, 'gi'), String(parseado));
+              valorPorToken[token] = String(parseado);
             }
           });
+
+          // Los tokens salieron de este mismo patrón sobre `exprBase`, así que toda
+          // coincidencia tiene entrada en el mapa; el fallback solo cubre los casos ya
+          // marcados como no calculables, donde `formulaStr` nunca llega a evaluarse.
+          const formulaStr = exprBase.replace(
+            /\bQ\d+\b/gi,
+            (coincidencia) => valorPorToken[coincidencia.toUpperCase()] ?? coincidencia,
+          );
 
           const claveDestino = claveRespuesta(p.id, uuidFila);
 

@@ -16,6 +16,12 @@ import { resolverIdDesdeToken, sanearTokenQEnJSON, resolverRespuesta } from './t
  * indistinguible de "sin regla" y el dato se perdería en campo sin que nadie lo note.
  */
 
+/** Neutraliza los metacaracteres de una cadena para usarla como literal dentro de un
+ *  patrón. Sin esto, cualquier clave de respuesta que llevara `.`, `(` o `*` dejaría
+ *  de ser un nombre y pasaría a ser un patrón con significado propio. */
+const escaparParaRegex = (valor: string): string =>
+  valor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /** Resultado de evaluar una regla, con el motivo cuando no se pudo interpretar. */
 export interface ResultadoVisibilidad {
   visible: boolean;
@@ -77,8 +83,14 @@ export const evaluarVisibilidad = (
     }
     Object.keys(fuente).forEach(clave => {
       const valor = fuente[clave] ? `'${fuente[clave]}'` : "''";
+      // La clave se escapa antes de entrar en el patrón. Hoy son ids numéricos y
+      // uuids —donde escapar no cambia nada—, pero la clave nace de los datos y no
+      // del código: sin escapar, un metacarácter la convertiría en un patrón activo
+      // capaz de sustituir donde no debe o de degenerar en ReDoS.
+      const claveEscapada = escaparParaRegex(clave);
       // Límites de palabra para no corromper números ya sustituidos.
-      reglaEvaluada = reglaEvaluada.replace(new RegExp(`\\b${clave}\\b`, 'g'), valor);
+      // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
+      reglaEvaluada = reglaEvaluada.replace(new RegExp(`\\b${claveEscapada}\\b`, 'g'), valor);
     });
 
     return { visible: !!Function(`"use strict"; return (${reglaEvaluada})`)() };
