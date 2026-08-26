@@ -24,8 +24,6 @@ CREATE TABLE Usuarios_AppEx (
     Estado BIT DEFAULT 1 -- 1 = Alta, 0 = Baja (Regla 2.5)
 );
 
--- Insertamos un usuario de prueba (La contraseña en texto plano es "123456")
--- El hash generado es de Bcrypt para "123456"
 INSERT INTO Usuarios (Username, PasswordHash, NombreCompleto, IdEmpresa, IdRol, Estado)
 VALUES (
     'usuario.demo', 
