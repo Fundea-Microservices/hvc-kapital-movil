@@ -9,7 +9,7 @@ permissions:
   contents: read
   security-events: write
 jobs:
-  sast-scan:
+    sast-scan:
     name: "Análisis Estático de Código (SAST)"
     runs-on: ubuntu-latest
     steps:
@@ -21,21 +21,36 @@ jobs:
           python-version: "3.12"
       - name: Instalar Semgrep
         run: pip install --no-cache-dir semgrep
-      - name: Ejecutar Escaneo SAST (bloqueante)
+      - name: Ejecutar Escaneo SAST
+        id: semgrep
+        continue-on-error: true   # deja correr los pasos siguientes aunque haya findings
         run: |
           semgrep scan \
             --config=auto \
-            --text \
             --json --output=semgrep-results.json \
+            --sarif --output=semgrep-results.sarif \
             --exclude="onesiteapp_ex-ms/dist" \
-            --exclude="onesiteapp_ex/build" \
-            --error
-      - name: Publicar resultados SAST
+            --exclude="onesiteapp_ex/build"
+      - name: Mostrar resumen legible en el log
+        if: always()
+        run: |
+          echo "## Hallazgos Semgrep" >> $GITHUB_STEP_SUMMARY
+          jq -r '.results[] | "- **\(.check_id)** en `\(.path):\(.start.line)` — \(.extra.message)"' \
+            semgrep-results.json >> $GITHUB_STEP_SUMMARY
+      - name: Publicar resultados SAST (JSON)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: semgrep-sast-results
           path: semgrep-results.json
+      - name: Subir SARIF a GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-results.sarif
+      - name: Fallar el job si hubo findings bloqueantes
+        if: steps.semgrep.outcome == 'failure'
+        run: exit 1
   sca-scan:
     name: "Análisis de Dependencias Terceras (SCA)"
     runs-on: ubuntu-latest
