@@ -1,3 +1,8 @@
+const dotenv = require('dotenv');
+const path = require('path');
+
+dotenv.config({ path: path.join(__dirname, '.env') });
+
 module.exports = {
   apps: [
     {
@@ -9,6 +14,7 @@ module.exports = {
       watch: false,
       max_memory_restart: "500M",
       env: {
+        ...process.env,
         NODE_ENV: "production",
         PORT: 5030,
         TZ: "UTC"
