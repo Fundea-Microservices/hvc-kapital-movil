@@ -46,28 +46,3 @@ jobs:
         run: |
           pm2 startOrRestart ecosystem.config.js --update-env
           pm2 save
-
-  deploy-frontend:
-    name: "Build y Despliegue Frontend (onesiteapp_ex)"
-    needs: security-scan
-    runs-on: [self-hosted, Linux, X64]
-    defaults:
-      run:
-        working-directory: onesiteapp_ex
-    steps:
-      - name: Checkout del Código Fuente
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
-      - name: Configurar Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: onesiteapp_ex/package-lock.json
-      - name: Instalar Dependencias
-        run: npm ci
-      - name: Ejecutar Build del Frontend
-        run: npm run build
-      - name: Copiar Artefactos al Directorio de Despliegue
-        run: |
-          mkdir -p /var/www/ProyectosFundea/onesiteapp_ex
-          rsync -av --delete build/ /var/www/ProyectosFundea/onesiteapp_ex/
