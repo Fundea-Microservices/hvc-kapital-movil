@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: "api-ex",
-      script: "dist/src/main.js",
+      script: "main.js",
       cwd: "./",
       instances: 1,
       autorestart: true,
