@@ -349,7 +349,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   ): boolean => {
     const resultado = evaluarVisibilidad(aDominio(p), preguntasDominio, snap, uuidFila);
     if (resultado.errorRegla) {
-      console.warn(`[VISIBILIDAD] Regla inválida en "${p.etiqueta}":`, p.regla_visibilidad, resultado.errorRegla);
+      console.warn('[VISIBILIDAD] Regla inválida en la pregunta:', p.etiqueta, p.regla_visibilidad, resultado.errorRegla);
     }
     return resultado.visible;
   };
