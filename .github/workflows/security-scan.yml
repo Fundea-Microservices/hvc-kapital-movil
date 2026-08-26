@@ -1,0 +1,53 @@
+name: "DevSecOps Security Scan - FUNDEA"
+on:
+  pull_request:
+    branches: [ "develop", "production", "certification" ]
+  push:
+    branches: [ "develop", "production", "certification" ]
+  workflow_call:
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  sast-scan:
+    name: "Análisis Estático de Código (SAST)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del Código Fuente
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - name: Configurar Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Instalar Semgrep
+        run: pip install --no-cache-dir semgrep
+      - name: Ejecutar Escaneo SAST (bloqueante)
+        run: |
+          semgrep scan \
+            --config=auto \
+            --text \
+            --json --output=semgrep-results.json \
+            --exclude="onesiteapp_ex-ms/dist" \
+            --exclude="onesiteapp_ex/build" \
+            --error
+      - name: Publicar resultados SAST
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: semgrep-sast-results
+          path: semgrep-results.json
+  sca-scan:
+    name: "Análisis de Dependencias Terceras (SCA)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del Código Fuente
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+      - name: Ejecutar Escaneo SCA (Trivy)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'HIGH,CRITICAL'
