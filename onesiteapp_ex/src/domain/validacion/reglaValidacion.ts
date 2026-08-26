@@ -125,6 +125,11 @@ export const validarValor = (
         );
         continue;
       }
+      // El patrón dinámico ES la funcionalidad: las reglas de validación las escribe
+      // el BackOffice y no pueden ser literales en el cliente. El origen es una fuente
+      // administrada (no el encuestador), la longitud está acotada arriba y el efecto
+      // de un patrón patológico queda confinado al dispositivo que lo evalúa.
+      // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp
       const regex = new RegExp(patron);
       if (!regex.test(texto)) {
         return { valido: false, mensaje: 'Formato incorrecto según regla institucional.' };

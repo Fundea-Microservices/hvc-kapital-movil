@@ -26,9 +26,9 @@ CREATE TABLE Usuarios_AppEx (
 
 INSERT INTO Usuarios (Username, PasswordHash, NombreCompleto, IdEmpresa, IdRol, Estado)
 VALUES (
-    'usuario.demo', 
-    '$2b$10$LtDdxhBQ3EirECc/uxC.UeEf5echI7F4n8bKDI/gkP/suJSr3siZi', 
-    'Juan Demo', 
+    'usuario.demo',
+    'SIN_CONTRASENA_ASIGNADA',
+    'Juan Demo',
     1, -- Asumiendo que el IdEmpresa del Sprint 1 es 1
     1
 );
