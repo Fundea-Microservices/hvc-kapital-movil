@@ -22,6 +22,11 @@ export interface ReglaParseada {
 /** `regla_validacion` vacía o ausente equivale a "sin restricciones". */
 const REGLA_VACIA: ReglaParseada = { mascara: null, patrones: [], rangos: [] };
 
+/** Techo para un patrón del BackOffice. Las reglas reales (cédula, NIT, teléfono,
+ *  correo) rondan las decenas de caracteres; un patrón mucho mayor delata un error de
+ *  captura y no se compila. */
+const LONGITUD_MAXIMA_PATRON = 500;
+
 /**
  * Parsea `regla_validacion` en máscara + patrones regex + rangos numéricos.
  * Fragmenta por comas protegiendo cuantificadores `{n,m}` y argumentos de
@@ -110,6 +115,16 @@ export const validarValor = (
     const texto = regla.mascara ? valorCrudo.replace(/[\s-]/g, '') : valorCrudo;
 
     for (const patron of regla.patrones) {
+      // Un patrón desmesurado es siempre un error de captura en el BackOffice, nunca
+      // una regla institucional legítima. Se descarta en vez de compilarlo: acota la
+      // superficie de ReDoS sin poder romper ninguna regla real.
+      if (patron.length > LONGITUD_MAXIMA_PATRON) {
+        console.warn(
+          'Patrón de validación descartado por exceder la longitud máxima. Longitud:',
+          patron.length,
+        );
+        continue;
+      }
       const regex = new RegExp(patron);
       if (!regex.test(texto)) {
         return { valido: false, mensaje: 'Formato incorrecto según regla institucional.' };
