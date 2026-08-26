@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { createReadStream, ReadStream } from 'fs';
 import { access, constants, mkdir, stat, writeFile } from 'fs/promises';
 import { createHash } from 'crypto';
-import { isAbsolute, join, resolve, sep } from 'path';
+import { dirname, isAbsolute, resolve, sep } from 'path';
 
 import {
   ContextoArchivo,
@@ -217,7 +217,7 @@ export class MultimediaStorageService implements OnModuleInit {
     const rutaAbsoluta = this.resolverAbsoluta(rutaRelativa);
 
     try {
-      await mkdir(join(rutaAbsoluta, '..'), { recursive: true });
+      await mkdir(dirname(rutaAbsoluta), { recursive: true });
       await writeFile(rutaAbsoluta, buffer);
     } catch (error) {
       const detalle = error instanceof Error ? error.message : String(error);
@@ -276,7 +276,29 @@ export class MultimediaStorageService implements OnModuleInit {
    * pasaría por buena siendo otro directorio.
    */
   private resolverAbsoluta(rutaRelativa: string): string {
-    const absoluta = resolve(this.raiz, rutaRelativa);
+    // Primera barrera, ANTES de resolver: se rechaza de plano lo que ni siquiera es
+    // una ruta relativa contenida. `resolve` colapsa los `..` silenciosamente, así
+    // que una ruta absoluta o con recorrido llegaría "limpia" a la comprobación de
+    // abajo y solo se distinguiría por el resultado. Rechazarla aquí deja el motivo
+    // real en el log y evita depender de un único control.
+    const candidata = String(rutaRelativa ?? '');
+    const segmentos = candidata.split(/[\\/]+/);
+    const invalida =
+      candidata === '' ||
+      candidata.includes('\0') ||
+      isAbsolute(candidata) ||
+      segmentos.includes('..');
+
+    if (invalida) {
+      this.logger.error(`Ruta relativa rechazada: "${candidata}"`);
+      throw new ForbiddenException('Ruta de archivo no permitida');
+    }
+
+    // `candidata` ya está validada arriba (relativa, sin `..`, sin NUL) y el resultado
+    // se confina con `esRutaContenida` justo después. Ver pruebas en
+    // multimedia.politicas.spec.ts.
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal
+    const absoluta = resolve(this.raiz, candidata);
 
     if (!esRutaContenida(absoluta, this.raiz, sep)) {
       this.logger.error(
