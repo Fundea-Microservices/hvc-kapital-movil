@@ -5,10 +5,23 @@ on:
   push:
     branches: [ "develop", "production", "certification" ]
   workflow_call:
+# NO SE PUBLICA EN GITHUB CODE SCANNING (pestaña Security), a propósito.
+#
+# La API de Code Scanning es gratuita en repositorios públicos, pero este repo es
+# privado y ahí exige GitHub Advanced Security, un producto de pago. Sin esa
+# licencia el paso de subida del SARIF falla con "Advanced Security must be enabled
+# for this repository" y tumba el job entero sin aportar nada.
+#
+# Los hallazgos se entregan por dos vías que no dependen de esa licencia:
+#   - el resumen del job (GITHUB_STEP_SUMMARY), legible en la propia ejecución;
+#   - el artifact `semgrep-sast-results`, con el JSON completo.
+#
+# Lo que bloquea la fusión es el paso final "Fallar el job...", que depende de
+# `semgrep --error` y nunca dependió de la subida. Si algún día se contrata Advanced
+# Security, hay que recuperar el paso `upload-sarif`, el paso que genera el SARIF y
+# los permisos `security-events: write` y `actions: read`, retirados junto con ellos.
 permissions:
   contents: read
-  security-events: write
-  actions: read
 jobs:
   sast-scan:
     name: "Análisis Estático de Código (SAST)"
@@ -36,15 +49,6 @@ jobs:
             --exclude="onesiteapp_ex/build" \
             --error
 
-      - name: Generar SARIF para Code Scanning
-        if: always()
-        run: |
-          semgrep scan \
-            --config=auto \
-            --sarif --output=semgrep-results.sarif \
-            --exclude="onesiteapp_ex-ms/dist" \
-            --exclude="onesiteapp_ex/build"
-
       - name: Mostrar resumen legible en el log
         if: always()
         run: |
@@ -58,12 +62,6 @@ jobs:
         with:
           name: semgrep-sast-results
           path: semgrep-results.json
-
-      - name: Subir SARIF a GitHub Code Scanning
-        if: always()
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938  # v4.37.9
-        with:
-          sarif_file: semgrep-results.sarif
 
       - name: Fallar el job si hubo findings bloqueantes
         if: steps.semgrep.outcome == 'failure'
