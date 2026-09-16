@@ -110,7 +110,7 @@ const confirmarYSellarSincronizacion = async (tablas: string[] = TABLAS_AUDITADA
         }
       });
     } catch (e) {
-      console.warn(`[SYNC ACK] No se pudo confirmar "${tabla}"; su fecha local no avanza:`, e);
+      console.warn('[SYNC ACK] No se pudo confirmar la tabla; su fecha local no avanza. Tabla:', tabla, e);
     }
   }
 };
@@ -281,7 +281,9 @@ export const runFullSync = async () => {
           const mensajeBackend = axios.isAxiosError(err)
             ? (textoDe((err.response?.data ?? {}) as FilaServidor, 'message') ?? err.message)
             : err instanceof Error ? err.message : String(err);
-          console.error(`❌ [SYNC PUSH ERROR] Fallo al subir UUID ${uuidBase}. Detalle:`, mensajeBackend);
+          // `uuidBase` y el mensaje del backend van como argumentos, no interpolados:
+          // el detalle llega del servidor y no debe poder actuar de cadena de formato.
+          console.error('❌ [SYNC PUSH ERROR] Fallo al subir UUID:', uuidBase, 'Detalle:', mensajeBackend);
           // Queda en la bitacora para que soporte pueda verlo sin el dispositivo
           // delante. El uuid identifica la instancia, no al encuestado.
           await registrarError('syncManager.submit', err, { uuidBase, idEncuesta: String(idEncuesta) });

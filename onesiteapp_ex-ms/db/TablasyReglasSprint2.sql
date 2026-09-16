@@ -24,13 +24,11 @@ CREATE TABLE Usuarios_AppEx (
     Estado BIT DEFAULT 1 -- 1 = Alta, 0 = Baja (Regla 2.5)
 );
 
--- Insertamos un usuario de prueba (La contraseña en texto plano es "123456")
--- El hash generado es de Bcrypt para "123456"
 INSERT INTO Usuarios (Username, PasswordHash, NombreCompleto, IdEmpresa, IdRol, Estado)
 VALUES (
-    'usuario.demo', 
-    '$2b$10$LtDdxhBQ3EirECc/uxC.UeEf5echI7F4n8bKDI/gkP/suJSr3siZi', 
-    'Juan Demo', 
+    'usuario.demo',
+    'SIN_CONTRASENA_ASIGNADA',
+    'Juan Demo',
     1, -- Asumiendo que el IdEmpresa del Sprint 1 es 1
     1
 );

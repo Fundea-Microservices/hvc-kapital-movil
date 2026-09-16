@@ -31,7 +31,7 @@ export const obtenerParametro = async (clave: string, porDefecto: string): Promi
     }
     return String(valor).trim();
   } catch (e) {
-    console.warn(`[PARAMETROS] Error leyendo clave "${clave}"; se usa el valor por defecto:`, e);
+    console.warn('[PARAMETROS] Error leyendo clave; se usa el valor por defecto. Clave:', clave, e);
     return porDefecto;
   }
 };

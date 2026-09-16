@@ -125,11 +125,27 @@ export function mapeoDesdeEntorno(
   };
 }
 
-/** Camina un dot-path dentro de un objeto; undefined si cualquier tramo no existe. */
+/** Tramos que nunca se recorren: no son datos, son la cadena de prototipos. Seguirlos
+ *  sacaría al caminante del cuerpo de la respuesta y lo metería en el prototipo de
+ *  `Object`, desde donde se puede leer —o, con un `set`, contaminar— algo global. */
+const TRAMOS_PROHIBIDOS: readonly string[] = [
+  '__proto__',
+  'prototype',
+  'constructor',
+];
+
+/** Camina un dot-path dentro de un objeto; undefined si cualquier tramo no existe.
+ *
+ *  Solo se aceptan propiedades PROPIAS: la ruta la define un administrador vía
+ *  `API_CATALOGOS_EXT_RUTA_DATOS`, pero el objeto recorrido es la respuesta de un
+ *  servicio externo, y ninguno de los dos merece poder llegar al prototipo. */
 function leerRuta(obj: unknown, ruta: string[]): unknown {
   let actual: unknown = obj;
   for (const tramo of ruta) {
     if (!actual || typeof actual !== 'object') return undefined;
+    if (TRAMOS_PROHIBIDOS.includes(tramo)) return undefined;
+    if (!Object.prototype.hasOwnProperty.call(actual, tramo)) return undefined;
+    // nosemgrep: javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop.prototype-pollution-loop
     actual = (actual as Record<string, unknown>)[tramo];
   }
   return actual;
