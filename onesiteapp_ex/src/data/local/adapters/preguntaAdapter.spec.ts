@@ -68,6 +68,25 @@ describe('aPreguntaEncuesta', () => {
     expect(plana.es_obligatorio).toBe(1);
     expect(plana.orden).toBe(5);
   });
+
+  it('mapea mensaje_error y mensaje_notificacion desde el modelo y el _raw', () => {
+    // Columnas de la migración v11: como el resto, se leen del modelo y del _raw.
+    const p = modelo(
+      { id: '1', mensaje_error: 'Error del modelo' },
+      { mensaje_notificacion: 'Recordatorio del raw' },
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const plana = aPreguntaEncuesta(p as any);
+    expect(plana.mensaje_error).toBe('Error del modelo');
+    expect(plana.mensaje_notificacion).toBe('Recordatorio del raw');
+  });
+
+  it('mensaje_error y mensaje_notificacion ausentes quedan en null', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const plana = aPreguntaEncuesta(modelo({ id: '1' }, {}) as any);
+    expect(plana.mensaje_error).toBeNull();
+    expect(plana.mensaje_notificacion).toBeNull();
+  });
 });
 
 describe('aOpcionCatalogo', () => {

@@ -37,8 +37,18 @@ CREATE TABLE appEx_Reglas (
     IdPregunta INT PRIMARY KEY FOREIGN KEY REFERENCES appEx_Pregunta(IdPregunta),
     SintaxisCalculo TEXT NULL,
     ReglaValidacion TEXT NULL,
-    ReglaVisibilidad TEXT NULL
+    ReglaVisibilidad TEXT NULL,
+    -- Mensajes parametrizables por pregunta (deuda técnica cerrada):
+    --   MensajeError        -> sustituye el texto de error de la validación (regex/rango/obligatorio).
+    --   MensajeNotificacion -> recordatorio para el encuestador; la app lo muestra en un modal
+    --                          al enfocar el campo (texto plano, sin condiciones).
+    MensajeError NVARCHAR(500) NULL,
+    MensajeNotificacion NVARCHAR(500) NULL
 );
+-- Migración para entornos que ya tenían la tabla creada (ejecutar solo una vez en prod):
+-- ALTER TABLE appEx_Reglas
+-- ADD MensajeError NVARCHAR(500) NULL,
+--     MensajeNotificacion NVARCHAR(500) NULL;
 
 -- Se crea la tabla transaccional para recibir el JSON Bulk (S5)
 CREATE TABLE appEx_Respuestas (

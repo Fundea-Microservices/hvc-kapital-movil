@@ -1,4 +1,4 @@
-import axios, { AxiosRequestConfig, InternalAxiosRequestConfig }  from 'axios';
+import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig }  from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import * as Application from 'expo-application';
 import { Alert } from 'react-native';
@@ -7,6 +7,32 @@ import { wipeLocalDatabase } from '../../data/local/services/database.service';
 
 const baseURL = process.env.EXPO_PUBLIC_API_URL;
 const baseCatalogosURL = process.env.EXPO_PUBLIC_API_CATALOGOS_URL;
+/**
+ * URL COMPLETA del endpoint de carga de agenda, normalizada.
+ *
+ * La variable se copia a mano de una especificación y llega sin protocolo con mucha
+ * facilidad (`172.25.5.11:3000/api/onesiteex/precarga`). Axios trata una `baseURL` sin
+ * esquema como ruta relativa y la petición ni siquiera sale del dispositivo: el
+ * síntoma es un `ERR_NETWORK` genérico, idéntico al de estar fuera de cobertura, que
+ * manda a depurar la red cuando el problema es una cadena de texto. Se antepone
+ * `http://` en vez de rechazarla, porque el servicio vive en una IP de LAN sin TLS.
+ *
+ * A diferencia de las otras variables, esta contiene el endpoint ENTERO y no una base
+ * a la que se le concatena una ruta — el servicio no comparte prefijo con ningún otro.
+ */
+const normalizarUrlAgenda = (crudo: string | undefined): string | undefined => {
+  const valor = (crudo || '').trim();
+  if (valor === '') return undefined;
+  const tieneEsquema = valor.slice(0, 8).toLowerCase().includes('://');
+  const conEsquema = tieneEsquema ? valor : 'http://' + valor;
+  // Barras finales fuera: axios las conservaría y el servicio recibiría '//precarga/'.
+  let fin = conEsquema.length;
+  while (fin > 0 && conEsquema[fin - 1] === '/') fin -= 1;
+  return conEsquema.slice(0, fin);
+};
+
+const baseAgendaURL = normalizarUrlAgenda(process.env.EXPO_PUBLIC_CARGA_AGENDA_CLIENTES);
+const tokenAgenda = process.env.EXPO_PUBLIC_TOKEN_CARGA_AGENDA_CLIENTES;
 
 /**
  * Diagnóstico de la URL base, en el arranque.
@@ -22,6 +48,8 @@ const baseCatalogosURL = process.env.EXPO_PUBLIC_API_CATALOGOS_URL;
 const diagnosticarUrlBase = (): void => {
   console.log('🌐 [RED] URL base del API:', baseURL ?? '(SIN DEFINIR)');
   console.log('🌐 [RED] URL base de catálogos:', baseCatalogosURL ?? '(SIN DEFINIR)');
+  // Sin definir NO es un error: la carga de agenda degrada y el resto de la app sigue.
+  console.log('🌐 [RED] URL base de carga de agenda:', baseAgendaURL ?? '(SIN DEFINIR)');
 
   if (!baseURL) {
     console.error(
@@ -89,6 +117,47 @@ export const apiClientCatalogos = axios.create({
 });
 
 /**
+ * Instancia DEDICADA a la carga de la agenda de clientes asignados (RF-CE-07).
+ *
+ * POR QUÉ UNA INSTANCIA PROPIA
+ * Ese servicio es el que habla con el BackOffice y vive en su propia URL base, igual
+ * que los catálogos maestros o el carrusel. Nunca se hardcodea el host: una IP de LAN
+ * en el código haría que la función solo sirviera dentro de esa red.
+ *
+ * POR QUÉ EL TOKEN NO VA EN `Authorization`
+ * El interceptor de petición compartido asigna `Authorization: Bearer <token_sesion>`
+ * SIN condición, así que poner aquí el token del servicio lo pisaría. Además el propio
+ * servicio lo exige en una cabecera concreta: responde 401 `API_KEY_NO_ENVIADA` con el
+ * mensaje «Envíela en el encabezado `apikey`». El nombre va en MINÚSCULAS y sin guiones
+ * porque es el que valida el servidor, no una convención nuestra.
+ *
+ * Si la variable no está definida no se envía cabecera alguna: mandar
+ * `apikey: undefined` sería peor que no mandarla.
+ *
+ * ADVERTENCIA CONSCIENTE: todo lo prefijado `EXPO_PUBLIC_` se compila dentro del bundle
+ * y se puede extraer de un APK distribuido. Este token se acepta ahí por decisión de
+ * producto y debe tratarse como público (mínimo privilegio, solo lectura de la
+ * cartera). NO es el patrón a seguir para el siguiente servicio: el resto se proxean
+ * desde el backend precisamente por esto.
+ */
+export const apiClientAgenda = axios.create({
+  baseURL: baseAgendaURL,
+  timeout: 30000,
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    ...(tokenAgenda ? { apikey: tokenAgenda } : {}),
+  },
+});
+
+/**
+ * `false` si falta `EXPO_PUBLIC_CARGA_AGENDA_CLIENTES`. Sin URL base, axios resolvería
+ * una ruta relativa y fallaría con un "Network Error" indistinguible de un problema de
+ * cobertura; comprobarlo antes permite degradar con un mensaje que sí explica la causa.
+ */
+export const agendaConfigurada = (): boolean => !!baseAgendaURL;
+
+/**
  * Instancia DEDICADA a la subida de archivos.
  *
  * POR QUÉ NO SE REUSA `apiClient`
@@ -147,6 +216,8 @@ const requestInterceptorInterceptor = async (config: InternalAxiosRequestConfig)
 
 apiClient.interceptors.request.use(requestInterceptorInterceptor, (error) => Promise.reject(error));
 apiClientCatalogos.interceptors.request.use(requestInterceptorInterceptor, (error) => Promise.reject(error));
+// Necesita los mismos tokens: el asesor se deriva del JWT, nunca del cuerpo.
+apiClientAgenda.interceptors.request.use(requestInterceptorInterceptor, (error) => Promise.reject(error));
 // Solo el de petición: ver el comentario de `apiClientUpload`.
 apiClientUpload.interceptors.request.use(requestInterceptorInterceptor, (error) => Promise.reject(error));
 
@@ -228,8 +299,15 @@ const responseInterceptorInterceptor = async (error: unknown) => {
       const refreshToken = await SecureStore.getItemAsync('refresh_token');
       if (!refreshToken) throw new Error("No existe Refresh Token local.");
 
-      // Petición directa usando Axios base para eludir interceptores reactivos
-      const response = await axios.post(`${baseURL}/auth/refresh`, { refreshToken });
+      // Petición directa usando Axios base para eludir interceptores reactivos.
+      // Timeout EXPLÍCITO: `axios.post` global no hereda el timeout de `apiClient`, así
+      // que sin esto un refresh que no responde deja la petición original colgada para
+      // siempre (p. ej. el modal "Guardando contraseña..." nunca se cierra).
+      const response = await axios.post(
+        `${baseURL}/auth/refresh`,
+        { refreshToken },
+        { timeout: 30000 },
+      );
       const newToken = response.data.token_sesion;
 
       // Persistencia del nuevo token transaccional
@@ -294,5 +372,44 @@ const responseInterceptorInterceptor = async (error: unknown) => {
 // Se acopla la regla de escucha y auditoría de respuestas a ambos clientes HTTP
 apiClient.interceptors.response.use((response) => response, responseInterceptorInterceptor);
 apiClientCatalogos.interceptors.response.use((response) => response, responseInterceptorInterceptor);
+/**
+ * La agenda comparte el interceptor de PETICIÓN pero NO el de respuesta.
+ *
+ * Su 401 significa "apikey inválida o ausente", un dominio de autenticación distinto
+ * del JWT de sesión. Pasarlo por el interceptor compartido provocaba tres daños, los
+ * tres observados en campo:
+ *
+ *   1. Disparaba un refresh de `token_sesion` que NO puede arreglar una apikey mala, y
+ *      reintentaba la petición: DOS llamadas por intento contra un servicio con rate
+ *      limiting (60/minuto), gastando cupo para volver a fallar igual.
+ *   2. Si ese refresh fallaba, el `catch` cerraba la sesión del asesor y lo mandaba a
+ *      Login. Una apikey mal copiada en el `.env` podía, por esa vía, expulsar al
+ *      usuario de la aplicación.
+ *   3. Un 403 con el mensaje 'Device Blocked' habría ejecutado `wipeLocalDatabase()`.
+ *      Ese contrato es del backend propio; un servicio de terceros no debería poder
+ *      detonar el borrado de las capturas de campo por devolver un mensaje que
+ *      casualmente coincida.
+ *
+ * Se conserva solo el diagnóstico, que es lo que hizo falta para depurar la URL base.
+ * Es el mismo criterio que `apiClientUpload`: compartir lo útil, no lo destructivo.
+ */
+apiClientAgenda.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    if (!error.response) {
+      console.warn('[AGENDA] Sin respuesta del servicio de cartera.');
+      console.warn(`[AGENDA] Destino: ${error.config?.baseURL ?? ''}`);
+      console.warn(`[AGENDA] Código: ${error.code} | Mensaje: ${error.message}`);
+    } else if (error.response.status === 401) {
+      console.warn(
+        '[AGENDA] 401 del servicio de cartera: la cabecera «apikey» falta o no es ' +
+          'válida. NO es la sesión del asesor — revise ' +
+          'EXPO_PUBLIC_TOKEN_CARGA_AGENDA_CLIENTES y recuerde que las variables ' +
+          'EXPO_PUBLIC_* se incrustan en el bundle (hace falta: npx expo start -c).',
+      );
+    }
+    return Promise.reject(error);
+  },
+);
 
 export default apiClient;

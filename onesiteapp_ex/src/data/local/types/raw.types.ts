@@ -31,6 +31,8 @@ export interface RawPregunta extends RawBase {
   sintaxis_calculo: string | null;
   regla_visibilidad: string | null;
   regla_validacion: string | null;
+  mensaje_error: string | null;
+  mensaje_notificacion: string | null;
 }
 
 /** Fila de `local_captura` (respuestas capturadas en el dispositivo). */

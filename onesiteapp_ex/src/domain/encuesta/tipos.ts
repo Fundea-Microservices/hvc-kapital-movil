@@ -29,6 +29,10 @@ export interface PreguntaEncuesta {
   sintaxis_calculo: string | null;
   regla_visibilidad: string | null;
   regla_validacion: string | null;
+  /** Texto de error custom que sustituye el mensaje por defecto de la validación. */
+  mensaje_error: string | null;
+  /** Recordatorio para el encuestador; la UI lo muestra en un modal al enfocar el campo. */
+  mensaje_notificacion: string | null;
 }
 
 /** Opción de catálogo ya aplanada. */
@@ -95,6 +99,14 @@ export const esTipoMatriz = (tipo: string | null | undefined): boolean =>
  */
 export const esTipoLabel = (tipo: string | null | undefined): boolean =>
   ['LABEL', 'ETIQUETA', 'TEXTO_INFORMATIVO', 'INFORMATIVO'].includes(normalizarTipo(tipo));
+
+/**
+ * Campo de texto que solo admite MAYÚSCULAS. El BackOffice puede escribir cualquiera
+ * de los alias; la app fuerza la conversión real (no solo `autoCapitalize`, que en
+ * Android es una mera sugerencia del teclado y se salta al pegar).
+ */
+export const esTipoTextoMayusculas = (tipo: string | null | undefined): boolean =>
+  ['TEXT_UPPERCASE', 'TEXTO_MAYUSCULAS', 'MAYUSCULAS', 'UPPERCASE'].includes(normalizarTipo(tipo));
 
 /** Origen de datos servido por una API externa vía proxy del backend. */
 export const esOrigenApi = (pregunta: PreguntaEncuesta): boolean =>

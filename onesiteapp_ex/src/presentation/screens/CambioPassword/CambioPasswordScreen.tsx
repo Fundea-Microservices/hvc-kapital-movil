@@ -9,7 +9,6 @@ import {
   Keyboard,
   TouchableWithoutFeedback,
 } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
 import { Feather } from '@expo/vector-icons';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,11 +16,27 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { useAuthStore } from '../../store/useAuthStore';
 import { useCambiarPasswordMutation } from '../../hooks/useCambiarPasswordMutation';
+import { useLogout } from '../../hooks/useLogout';
+import axios from 'axios';
 import { evaluarPolitica, type ResultadoPolitica } from '../../../domain/validacion/politicaPassword';
-import { mensajeDeError } from '../../../data/remote/types/sync.types';
 import type { RootStackParamList } from '../../navigation/types';
 
 type ModalState = 'none' | 'syncing' | 'success' | 'error';
+
+/**
+ * Mensaje de error CONTROLADO por nosotros (no se surfacea el `message` crudo del
+ * backend). Distintos backends devuelven textos inconsistentes —el servidor de FUNDEA,
+ * p. ej., responde "NO SE LOGRO REALIZAR EL CAMBIO DE CONTRSEÑA..."— así que solo se
+ * distinguen por código HTTP los dos casos con significado para el usuario; cualquier
+ * otro fallo (500/404/red/desconocido) muestra el mensaje genérico.
+ */
+const GENERICO = 'No se pudo actualizar la contraseña';
+const mensajeErrorCambio = (error: unknown): string => {
+  const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+  if (status === 401) return 'La contraseña actual no es correcta';
+  if (status === 409) return 'La nueva contraseña no puede ser igual a la actual';
+  return GENERICO;
+};
 
 /**
  * Props opcionales del navigator. Se declaran `Partial` a propósito: la pantalla se
@@ -101,7 +116,7 @@ export const CambioPasswordScreen = ({ navigation, route }: Props = {}) => {
 
   const token = useAuthStore((state) => state.token);
   const nombreCompleto = useAuthStore((state) => state.nombreCompleto);
-  const limpiarCambioPassword = useAuthStore((state) => state.limpiarCambioPassword);
+  const { executeLogout } = useLogout();
 
   const politica: ResultadoPolitica = evaluarPolitica(
     passwordActual,
@@ -120,7 +135,7 @@ export const CambioPasswordScreen = ({ navigation, route }: Props = {}) => {
       {
         onSuccess: () => setModalState('success'),
         onError: (error) => {
-          setErrorMessage(mensajeDeError(error, 'No se pudo actualizar la contraseña'));
+          setErrorMessage(mensajeErrorCambio(error));
           setModalState('error');
         },
       }
@@ -135,11 +150,13 @@ export const CambioPasswordScreen = ({ navigation, route }: Props = {}) => {
       navigation?.goBack();
       return;
     }
-    // Primer ingreso: se libera el gate borrando la bandera en SecureStore (fuente de
-    // verdad que sobrevive reinicios) y en el store; App.tsx re-renderiza y cae al Dashboard.
-    await SecureStore.deleteItemAsync('requiere_cambio_password');
+    // Primer ingreso: tras cambiar la contraseña se CIERRA la sesión para que el usuario
+    // reingrese con sus nuevas credenciales (no se mantiene la sesión temporal).
+    // `executeLogout` borra las claves de sesión de SecureStore —incluida la bandera
+    // `requiere_cambio_password`—, invalida la sesión en el backend (best-effort) y llama
+    // a `logout()`: el enrolamiento se conserva y el gate de App.tsx cae a Login.
     setModalState('none');
-    limpiarCambioPassword();
+    void executeLogout();
   };
 
   return (
@@ -248,7 +265,7 @@ export const CambioPasswordScreen = ({ navigation, route }: Props = {}) => {
               <Text className="text-gray-500 text-center mb-8">
                 {voluntario
                   ? 'Tu contraseña se cambió correctamente.'
-                  : 'Tu nueva contraseña quedó registrada. Ya puedes usar la aplicación.'}
+                  : 'Tu nueva contraseña quedó registrada. Inicia sesión con ella.'}
               </Text>
               <TouchableOpacity
                 className="bg-[#1E3A8A] w-full rounded-2xl py-4 items-center"

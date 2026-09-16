@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 9, // v9: local_bitacora_error (diagnóstico de fallos en campo)
+  version: 11, // v11: mensajes parametrizables por pregunta (mensaje_error, mensaje_notificacion)
   tables: [
     // Tabla para control de sincronización por tabla (Regla 4.4 y 4.5)
     tableSchema({
@@ -86,6 +86,9 @@ export const schema = appSchema({
         { name: 'sintaxis_calculo', type: 'string', isOptional: true },
         { name: 'regla_visibilidad', type: 'string', isOptional: true },
         { name: 'regla_validacion', type: 'string', isOptional: true },
+        // v11: mensajes parametrizables por el BackOffice.
+        { name: 'mensaje_error', type: 'string', isOptional: true }, // Texto de error custom de la validación
+        { name: 'mensaje_notificacion', type: 'string', isOptional: true }, // Recordatorio (modal al enfocar)
       ],
     }),
 
@@ -132,15 +135,53 @@ export const schema = appSchema({
       ],
     }),
 
+    /**
+     * Agenda del asesor: los clientes que puede encuestar. La alimentan DOS escritores.
+     *
+     * POR QUÉ UNA SOLA TABLA Y NO DOS
+     * Separar la cartera asignada por BackOffice de los clientes creados en campo
+     * obligaría a la pantalla a fusionar dos observables y a duplicar el badge y la
+     * cancelación, y dejaría al Dashboard cruzando dos fuentes. La convivencia es segura
+     * porque `origen` reparte las filas en conjuntos DISJUNTOS:
+     *
+     *   origen = 'PRECARGA' -> las escribe el sync (sincronizarClientesAsignados)
+     *   origen = 'AD-HOC'   -> las escribe persistirCapturas al capturar sin cita previa
+     *
+     * Ninguno purga ni actualiza las del otro, así que el ORDEN en que se invoquen deja
+     * de importar. Es la misma invariante que separa a los dos escritores de
+     * `local_catalogo_opciones` mediante el prefijo `API_`; romperla reproduce aquel
+     * fallo en el que una función borraba en silencio lo que la otra acababa de traer.
+     *
+     * `estado_gestion` y `motivo_rechazo` son SIEMPRE del asesor: el sync no los pisa
+     * con el valor del servidor, que viaja aparte en `estado_servidor`.
+     *
+     * `expediente`, `ubicacion` y `busqueda_normalizada` se DERIVAN de `valores_json`
+     * al sincronizar, no al renderizar: `observeWithColumns` solo avisa de columnas
+     * declaradas, y un valor calculado en tiempo de render no sería observable.
+     */
     tableSchema({
       name: 'local_cliente_pendiente',
       columns: [
-        { name: 'id_cliente', type: 'string' },
+        { name: 'id_cliente', type: 'string', isIndexed: true },
         { name: 'nombre', type: 'string' },
         { name: 'codigo', type: 'string' },
-        { name: 'id_encuesta', type: 'string' },
-        { name: 'estado_gestion', type: 'number' },
+        { name: 'id_encuesta', type: 'string', isIndexed: true },
+        { name: 'estado_gestion', type: 'number', isIndexed: true },
         { name: 'motivo_rechazo', type: 'string', isOptional: true },
+        // --- v10: cartera asignada por BackOffice (RF-CE-07) ---
+        { name: 'origen', type: 'string', isIndexed: true }, // 'PRECARGA' | 'AD-HOC'
+        { name: 'documento', type: 'string', isOptional: true, isIndexed: true },
+        { name: 'cuenta', type: 'string', isOptional: true },
+        // Sin tilde en local: el servidor la manda como `operación` y el adaptador
+        // resuelve ese alias junto a las variantes camelCase y PascalCase.
+        { name: 'operacion', type: 'string', isOptional: true },
+        { name: 'expediente', type: 'string', isOptional: true },
+        { name: 'ubicacion', type: 'string', isOptional: true },
+        { name: 'busqueda_normalizada', type: 'string', isOptional: true },
+        // JSON crudo [{ id_pregunta, etiqueta, valor }] que prellena el formulario.
+        { name: 'valores_json', type: 'string', isOptional: true },
+        // CARGADO | APLICADO | ANULADO | RECHAZADO, tal cual lo manda BackOffice.
+        { name: 'estado_servidor', type: 'string', isOptional: true },
       ],
     }),
 

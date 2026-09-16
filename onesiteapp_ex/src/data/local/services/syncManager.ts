@@ -5,6 +5,7 @@ import { Database, Q } from '@nozbe/watermelondb';
 import { useAuthStore } from '../../../presentation/store/useAuthStore';
 import MetadataSync from '../models/MetadataSync';
 import LocalCaptura from '../models/LocalCaptura';
+import LocalClientePendiente from '../models/LocalClientePendiente';
 import { CatalogoOpcion } from '../models/CatalogoOpcion';
 import { obtenerParametroNumerico } from './parametros.service';
 import { leerRaw, type RawMetadataSync, type RawCaptura } from '../types/raw.types';
@@ -22,6 +23,7 @@ import { estamparIdCaptura, contarPendientesDeSubida } from './multimedia.servic
 import { subirMultimediaPendiente } from '../../remote/services/multimediaUploader';
 import { enviarBitacora } from '../../remote/services/bitacoraSender';
 import { registrarError } from './bitacora.service';
+import { sincronizarClientesAsignados } from './clientesAsignados.service';
 
 // ============================================================================
 // 1. FUNCIÓN PRINCIPAL DE SINCRONIZACIÓN DE ENCUESTAS (Deltas)
@@ -35,6 +37,11 @@ const TABLAS_AUDITADAS = [
   'cat_parametros_appex',
   'local_estructura_pregunta',
   'local_catalogo_opciones',
+  // `local_cliente_pendiente` NO entra aquí a propósito: su servicio (GET
+  // /api/onesiteex/precarga) no acepta ningún parámetro de fecha, así que cada carga
+  // es completa y no hay cursor que sellar. Auditarla escribiría una marca que nadie
+  // usa para filtrar — y el día que el servicio soporte deltas, arrancaría desde una
+  // fecha inventada, ocultando en silencio todo lo cambiado antes de ella.
 ];
 
 /**
@@ -74,8 +81,8 @@ const leerFechasSyncPorTabla = async (): Promise<Record<string, string | null>> 
  * y SOLO si el ACK es exitoso avanza la fecha local en metadata_sync (Regla 5.5).
  * Si un ACK falla, la fecha no avanza y el próximo sync re-pide esos deltas (upsert inocuo).
  */
-const confirmarYSellarSincronizacion = async () => {
-  for (const tabla of TABLAS_AUDITADAS) {
+const confirmarYSellarSincronizacion = async (tablas: string[] = TABLAS_AUDITADAS) => {
+  for (const tabla of tablas) {
     try {
       const respuesta = await apiClient.post<unknown>('/sync/ack', { tablaNombre: tabla, exitoso: true });
 
@@ -147,6 +154,26 @@ export const runFullSync = async () => {
         const userId = Number(userIdRaw);
         const idEncuesta = respuestas[0].id_encuesta;
 
+        // Traza captura → precarga. El `uuidBase` de una captura de origen PRECARGA
+        // ES el `id` de su fila de pre.Precarga (la agenda navega con
+        // uuidInstanciaBase = id_cliente). Se envía solo cuando la tarjeta existe y es
+        // PRECARGA; las ad-hoc mandan null y el backend no toca pre.Precarga. Sin este
+        // dato el backend no puede marcar FINALIZADO ni trazar la captura a su origen.
+        let idPrecargaEnvio: string | null = null;
+        try {
+          const tarjeta = await database.collections
+            .get<LocalClientePendiente>('local_cliente_pendiente')
+            .query(Q.where('id_cliente', uuidBase))
+            .fetch();
+          if (tarjeta.length > 0 && tarjeta[0].origen === 'PRECARGA') {
+            idPrecargaEnvio = uuidBase;
+          }
+        } catch (e) {
+          // Un fallo aquí no puede impedir el envío de la captura, que es lo
+          // irrecuperable; como mucho se pierde la marca de FINALIZADO en el servidor.
+          console.warn('[SYNC] No se pudo resolver idPrecarga de', uuidBase, e);
+        }
+
         // DEFENSIVO GEOLOCALIZACIÓN
         const registroGps = respuestas.find(r => {
           if (!r.valor || typeof r.valor !== 'string') return false;
@@ -180,6 +207,8 @@ export const runFullSync = async () => {
           longitud: longitudEnvio,
           fechaInicio: fechaInicioReal || new Date().toISOString(),
           fechaFin: fechaFinReal || new Date().toISOString(),
+          // GUID de pre.Precarga, o null para capturas ad-hoc.
+          idPrecarga: idPrecargaEnvio,
           // Identificador real del móvil para auditoría (Ticket 1: DispositivoID).
           dispositivoId: (await SecureStore.getItemAsync('deviceToken')) || 'ONE_SITE_SGRAS',
           respuestas: respuestas.map(r => ({
@@ -360,6 +389,8 @@ export const runFullSync = async () => {
                 sintaxis_calculo: textoDe(row, 'sintaxis_calculo', 'sintaxisCalculo', 'SintaxisCalculo'),
                 regla_visibilidad: textoDe(row, 'regla_visibilidad', 'reglaVisibilidad', 'ReglaVisibilidad'),
                 regla_validacion: textoDe(row, 'regla_validacion', 'reglaValidacion', 'ReglaValidacion'),
+                mensaje_error: textoDe(row, 'mensaje_error', 'mensajeError', 'MensajeError'),
+                mensaje_notificacion: textoDe(row, 'mensaje_notificacion', 'mensajeNotificacion', 'MensajeNotificacion'),
                 etiqueta: textoDe(row, 'etiqueta', 'Etiqueta') ?? 'Sin etiqueta',
                 tipo_dato: textoDe(row, 'tipo_dato', 'tipoDato', 'TipoDato') ?? 'TEXTO',
                 opciones: textoDe(row, 'opciones', 'Opciones'),
@@ -417,6 +448,16 @@ export const runFullSync = async () => {
       // campo. Falla aislada: un problema con la API externa no debe abortar el sync.
       await sincronizarCatalogosApi(database);
     }
+
+    // ========================================================================
+    // 3.b CARTERA DE CLIENTES ASIGNADOS (RF-CE-07)
+    // ========================================================================
+    // Carga COMPLETA de todas las encuestas: el servicio no ofrece incremental.
+    // Escritor explícito y no `pullChanges`, para no dejar que el servidor pise
+    // `estado_gestion`/`motivo_rechazo` del asesor.
+    // Nunca lanza: un fallo de la cartera no puede arrastrar consigo el envío de
+    // capturas de la fase 1, que es lo único irrecuperable del ciclo.
+    await sincronizarClientesAsignados(database);
 
     // ========================================================================
     // 4. CONFIRMACIÓN (ACK) Y SELLADO DE FECHAS POR TABLA — Regla 5.5

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Platform, Alert, ActivityIndicator, Modal, ScrollView, Image, Keyboard } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { obtenerParametroNumerico } from '../../../data/local/services/parametros.service';
 import { parsearReglaValidacion, validarValor, aplicarMascara, type ReglaParseada } from '../../../domain/validacion/reglaValidacion';
 import { esTipoNumerico, opcionesPorTipo, sanitizarEntradaNumerica } from '../../../domain/validacion/entradaNumerica';
-import { tipoMedioDe } from '../../../domain/encuesta/tipos';
+import { tipoMedioDe, esTipoTextoMayusculas } from '../../../domain/encuesta/tipos';
 import { CampoMultimedia } from './CampoMultimedia';
 import type { ContextoCaptura } from '../../../data/local/services/multimedia.service';
 
@@ -26,18 +26,19 @@ interface SurveyFieldProps {
   mensajeInfo?: string;
   onChangeText: (text: string) => void;
   reglaValidacion?: string | null;
+  // Texto de error custom del BackOffice; sustituye el mensaje por defecto de la validación.
+  mensajeError?: string | null;
+  // Recordatorio para el encuestador; se muestra en un modal al enfocar/tocar el campo.
+  mensajeNotificacion?: string | null;
   onBlur: () => void;
-  /**
-   * Coordenada de la respuesta dentro de la captura en curso. Solo la necesitan los
-   * campos de archivo: el binario se guarda en una tabla propia y hace falta saber a
-   * qué encuesta, pregunta y fila de matriz pertenece. Es opcional para no obligar a
-   * las pantallas que no capturan multimedia a construirlo.
-   */
+   //Coordenada de la respuesta dentro de la captura en curso. multimedia a construirlo.
   contextoCaptura?: ContextoCaptura;
+   //El valor actual viene de la precarga del BackOffice y el asesor aún no lo ha cambiado. 
+  esPrecargado?: boolean;
 }
 
 export const SurveyField = ({
-  etiqueta, tipoDato, esObligatorio, esEditable, valor, opciones, arbolOpciones, onChangeText, reglaValidacion, mensajeInfo, onBlur, contextoCaptura
+  etiqueta, tipoDato, esObligatorio, esEditable, valor, opciones, arbolOpciones, onChangeText, reglaValidacion, mensajeError, mensajeNotificacion, mensajeInfo, onBlur, contextoCaptura, esPrecargado = false
 }: SurveyFieldProps) => {
 
   const [isGpsLoading, setIsGpsLoading] = useState(false);
@@ -45,6 +46,12 @@ export const SurveyField = ({
   const [showDropdown, setShowDropdown] = useState(false);
   const [reglaParseada, setReglaParseada] = useState<ReglaParseada>(REGLA_VACIA);
   const [errorValidacion, setErrorValidacion] = useState<string | null>(null);
+  // Se marca al salir del campo: hasta entonces no se muestra el mensaje de obligatorio,
+  // para no ensuciar el render inicial de un formulario recién abierto.
+  const [tocado, setTocado] = useState(false);
+  // Modal recordatorio (mensaje_notificacion). El ref evita repetirlo en el mismo montaje.
+  const [showNotifModal, setShowNotifModal] = useState(false);
+  const notifYaMostrado = useRef(false);
   // Drill-down jerárquico del SELECT: pila de niveles navegados + breadcrumb.
   const [pilaNiveles, setPilaNiveles] = useState<NodoOpcion[][]>([]);
   const [rutaDrill, setRutaDrill] = useState<string[]>([]);
@@ -58,7 +65,6 @@ export const SurveyField = ({
   const tipoCrudo = tipoDato ? tipoDato.trim().toUpperCase() : 'TEXTO';
   const tipoFormateado = ALIAS_TIPOS[tipoCrudo] || tipoCrudo;
   // Familia de archivo (FOTO | MULTIMEDIA | DOCUMENTO | FIRMA), o null si la pregunta
-  // no captura archivos. La tabla de alias vive en el dominio, no aquí.
   const tipoMedio = tipoMedioDe(tipoCrudo);
 
   // DE REGLAS DEL BACKOFFICE — parseo delegado al módulo compartido con
@@ -69,9 +75,25 @@ export const SurveyField = ({
 
   // VALIDACIÓN INMUNIZADO CONTRA FALSOS POSITIVOS
   const ejecutarValidacionInstitucional = (textoVisual: string): boolean => {
-    const resultado = validarValor(textoVisual, reglaParseada);
+    const resultado = validarValor(textoVisual, reglaParseada, mensajeError);
     setErrorValidacion(resultado.mensaje);
     return resultado.valido;
+  };
+
+  // Recordatorio para el encuestador: se abre una sola vez por montaje, al primer
+  // toque/enfoque del campo, sin depender de lo que ya se haya capturado.
+  const dispararRecordatorio = () => {
+    if (mensajeNotificacion && !notifYaMostrado.current) {
+      notifYaMostrado.current = true;
+      setShowNotifModal(true);
+    }
+  };
+
+  // Salida del campo: activa el mensaje de obligatorio y revalida.
+  const handleBlur = () => {
+    setTocado(true);
+    ejecutarValidacionInstitucional(valor);
+    onBlur();
   };
 
   // Se ejecuta la validación reactiva si los datos lógicos cambian desde el servidor
@@ -91,6 +113,10 @@ export const SurveyField = ({
     } else if (esTipoNumerico(tipoFormateado)) {
       // keyboardType no basta: en Android se puede pegar texto o usar otro teclado.
       textoFormateado = sanitizarEntradaNumerica(textoDirecto, opcionesPorTipo(tipoFormateado));
+    } else if (esTipoTextoMayusculas(tipoFormateado)) {
+      // autoCapitalize es solo una sugerencia del teclado; se fuerza la conversión real
+      // para que el pegado y los teclados de terceros también queden en mayúsculas.
+      textoFormateado = textoDirecto.toUpperCase();
     } else {
       textoFormateado = textoDirecto;
     }
@@ -120,6 +146,13 @@ export const SurveyField = ({
   };
 
   const containerClasses = calcularClaseBorde();
+
+  // Mensaje de error a mostrar bajo el campo: el de la validación institucional o,
+  // para un obligatorio vacío ya "tocado", el mensaje custom del BackOffice (o el
+  // genérico si la columna viene vacía).
+  const esObligatorioVacio = esObligatorio && (!valor || valor.trim() === '');
+  const mensajeErrorMostrado = errorValidacion
+    ?? (tocado && esObligatorioVacio ? (mensajeError || 'Este campo es obligatorio.') : null);
 
   // --- PARSEO SEGURO Y ROBUSTO DE OPCIONES ---
   let listaOpciones: string[] = [];
@@ -196,8 +229,7 @@ export const SurveyField = ({
   const renderContent = () => {
     switch (tipoFormateado) {
       // Tipos numéricos: se aceptan las variantes en inglés y español que emite el
-      // BackOffice. NUMBER faltaba y caía al `default` (input de texto libre), que
-      // es justo por lo que un campo numérico admitía letras.
+      // BackOffice.
       case 'NUMBER':
       case 'NUMERO':
       case 'NUMERIC':
@@ -227,7 +259,7 @@ export const SurveyField = ({
             editable={esEditable}
             value={valor}
             onChangeText={handleInputChange}
-            onBlur={() => { ejecutarValidacionInstitucional(valor); onBlur(); }}
+            onBlur={handleBlur}
             keyboardType={tipoTeclado}
             autoCapitalize="none"
             placeholder={esEditable ? "Escriba los datos aquí..." : ""}
@@ -300,7 +332,7 @@ export const SurveyField = ({
             editable={esEditable}
             value={valor}
             onChangeText={handleInputChange}
-            onBlur={() => { ejecutarValidacionInstitucional(valor); onBlur(); }}
+            onBlur={handleBlur}
             multiline={true}
             numberOfLines={4}
             textAlignVertical="top"
@@ -429,7 +461,7 @@ export const SurveyField = ({
           if (nuevaSeleccion.includes(optLimpia)) nuevaSeleccion = nuevaSeleccion.filter(opt => opt !== optLimpia);
           else nuevaSeleccion.push(optLimpia);
 
-          handleInputChange(nuevaSeleccion.join('||')); // ⚡ CORREGIDO: Uso de la función unificada
+          handleInputChange(nuevaSeleccion.join('||'));
           onBlur();
         };
 
@@ -536,6 +568,24 @@ export const SurveyField = ({
           </View>
         );
 
+      // Texto forzado a MAYÚSCULAS. La conversión real vive en handleInputChange;
+      // autoCapitalize="characters" es solo la ayuda visual del teclado.
+      case 'TEXT_UPPERCASE':
+      case 'TEXTO_MAYUSCULAS':
+      case 'MAYUSCULAS':
+      case 'UPPERCASE':
+        return (
+          <TextInput
+            className={`border-2 rounded-xl p-4 text-base text-gray-800 bg-white ${containerClasses}`}
+            editable={esEditable}
+            value={valor}
+            onChangeText={handleInputChange}
+            onBlur={handleBlur}
+            autoCapitalize="characters"
+            placeholder={esEditable ? "Escriba aquí..." : ""}
+          />
+        );
+
       default:
         return (
           <TextInput
@@ -543,7 +593,7 @@ export const SurveyField = ({
             editable={esEditable}
             value={valor}
             onChangeText={handleInputChange}
-            onBlur={() => { ejecutarValidacionInstitucional(valor); onBlur(); }}
+            onBlur={handleBlur}
             placeholder={esEditable ? "Escriba aquí..." : ""}
           />
         );
@@ -557,25 +607,65 @@ export const SurveyField = ({
   return (
     <View className="w-full">
       {!esInformativo && etiqueta !== 'Pregunta sin etiqueta' && (
-        <Text className="text-gray-500 font-bold text-sm tracking-wider mb-2 ml-1">
-          {etiqueta} {esObligatorio && <Text className="text-red-500">*</Text>}
-        </Text>
+        <View className="flex-row items-center justify-between mb-2">
+          <Text className="text-gray-500 font-bold text-sm tracking-wider ml-1 flex-1 pr-2">
+            {etiqueta} {esObligatorio && <Text className="text-red-500">*</Text>}
+          </Text>
+          {esPrecargado && (
+            <View className="flex-row items-center bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+              <Feather name="download" size={10} color="#B45309" />
+              <Text className="text-[9px] font-black text-amber-700 ml-1 tracking-wider">
+                PRECARGADO
+              </Text>
+            </View>
+          )}
+        </View>
       )}
 
-      {renderContent()}
+      {/* onTouchStart observa el primer toque del campo sin robar el gesto a los hijos:
+          es la señal uniforme de "enfocar/tocar" para disparar el recordatorio en
+          cualquier tipo de input (texto, select, radio, fecha…). */}
+      <View testID="campo-recordatorio-touch" onTouchStart={dispararRecordatorio}>
+        {renderContent()}
+      </View>
 
-      {errorValidacion && (
+      {mensajeErrorMostrado && (
         <Text className="text-red-500 text-xs font-bold ml-1 mt-1.5 tracking-wide animate-pulse">
-          {errorValidacion}
+          {mensajeErrorMostrado}
         </Text>
       )}
 
-      {mensajeInfo && !errorValidacion && (
+      {mensajeInfo && !mensajeErrorMostrado && (
         <View className="flex-row items-center mt-2 bg-amber-50 p-2 rounded-lg border border-amber-100">
           <Feather name="info" size={14} color="#F59E0B" />
           <Text className="text-[#F59E0B] text-xs ml-2 font-medium flex-1">{mensajeInfo}</Text>
         </View>
       )}
+
+      {/* Recordatorio para el encuestador (mensaje_notificacion). Sin ícono ni banner:
+          sale solo al enfocar/tocar el campo y no depende de lo capturado. */}
+      <Modal
+        visible={showNotifModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowNotifModal(false)}
+      >
+        <View className="flex-1 bg-black/50 justify-center items-center px-6">
+          <View className="bg-white rounded-2xl p-6 w-full max-w-md shadow-lg">
+            <View className="flex-row items-center mb-3">
+              <Feather name="info" size={22} color="#1E3A8A" />
+              <Text className="text-lg font-bold text-gray-800 ml-2">Recordatorio</Text>
+            </View>
+            <Text className="text-gray-600 text-base leading-relaxed mb-5">{mensajeNotificacion}</Text>
+            <TouchableOpacity
+              onPress={() => setShowNotifModal(false)}
+              className="bg-[#1E3A8A] rounded-xl py-3 items-center"
+            >
+              <Text className="text-white font-bold tracking-wide">Entendido</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };

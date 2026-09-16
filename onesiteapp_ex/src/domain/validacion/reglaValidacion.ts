@@ -96,10 +96,15 @@ export const aplicarMascara = (textoEntrada: string, plantilla: string | null): 
  * (la obligatoriedad se valida aparte, por `es_obligatorio`).
  * Ante un regex sintácticamente inválido del BackOffice, se tolera (válido) en
  * vez de bloquear al encuestador por un error ajeno a su captura.
+ *
+ * `mensajeError` (columna `MensajeError` del BackOffice) sustituye el texto de
+ * error cuando está presente; si es null se conservan los mensajes por defecto,
+ * así que una regla sin mensaje custom se comporta exactamente como antes.
  */
 export const validarValor = (
   valorCrudo: string,
-  regla: ReglaParseada
+  regla: ReglaParseada,
+  mensajeError?: string | null
 ): { valido: boolean; mensaje: string | null } => {
   if ((regla.patrones.length === 0 && regla.rangos.length === 0) || valorCrudo.trim() === '') {
     return { valido: true, mensaje: null };
@@ -112,14 +117,14 @@ export const validarValor = (
     for (const patron of regla.patrones) {
       const regex = new RegExp(patron);
       if (!regex.test(texto)) {
-        return { valido: false, mensaje: 'Formato incorrecto según regla institucional.' };
+        return { valido: false, mensaje: mensajeError || 'Formato incorrecto según regla institucional.' };
       }
     }
 
     for (const rango of regla.rangos) {
       const numero = parseFloat(texto.replace(',', '.'));
       if (isNaN(numero) || numero < rango.min || numero > rango.max) {
-        return { valido: false, mensaje: `El valor debe estar entre ${rango.min} y ${rango.max}.` };
+        return { valido: false, mensaje: mensajeError || `El valor debe estar entre ${rango.min} y ${rango.max}.` };
       }
     }
 

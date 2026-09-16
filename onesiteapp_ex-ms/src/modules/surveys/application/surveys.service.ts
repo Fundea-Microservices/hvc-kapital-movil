@@ -97,7 +97,7 @@ export class SurveysService {
 
     // 3. Se extraen las preguntas unidas con sus reglas (JOIN)
     const preguntas = await this.dataSource.query(`
-      SELECT p.*, r.SintaxisCalculo, r.ReglaValidacion, r.ReglaVisibilidad 
+      SELECT p.*, r.SintaxisCalculo, r.ReglaValidacion, r.ReglaVisibilidad, r.MensajeError, r.MensajeNotificacion
       FROM appEx_Pregunta p
       LEFT JOIN appEx_Reglas r ON p.IdPregunta = r.IdPregunta
     `);
@@ -141,6 +141,10 @@ export class SurveysService {
         sintaxis_calculo: row.SintaxisCalculo,
         regla_visibilidad: row.ReglaVisibilidad,
         regla_validacion: row.ReglaValidacion,
+        // Mensajes parametrizables por pregunta: error de validación custom y
+        // recordatorio para el encuestador (modal al enfocar el campo en la app).
+        mensaje_error: row.MensajeError,
+        mensaje_notificacion: row.MensajeNotificacion,
       });
     });
 
@@ -189,6 +193,10 @@ export class SurveysService {
       latitud,
       longitud,
       dispositivoId,
+      // GUID de la fila de pre.Precarga de la que salio esta captura. Llega SOLO
+      // cuando la encuesta se abrio desde una tarjeta de cartera; las ad-hoc mandan
+      // null y no tocan pre.Precarga.
+      idPrecarga,
     } = payload;
 
     const zona = this.zonaHoraria();
@@ -204,9 +212,9 @@ export class SurveysService {
       const resultHeader = await queryRunner.manager.query(
         `
         INSERT INTO appEx_Encabezado_Captura 
-        (IdEncuesta, IdUsuario, FechaInicio, FechaFin, Latitud, Longitud, DispositivoID)
+        (IdEncuesta, IdUsuario, FechaInicio, FechaFin, Latitud, Longitud, DispositivoID, IdPrecarga)
         OUTPUT inserted.IdCaptura
-        VALUES (@0, @1, @2, @3, @4, @5, @6)
+        VALUES (@0, @1, @2, @3, @4, @5, @6, @7)
       `,
         [
           idEncuesta,
@@ -221,6 +229,10 @@ export class SurveysService {
           latitud || null,
           longitud || null,
           dispositivoId || 'APP_OFFLINE',
+          // Se normaliza a null: una cadena vacia romperia la conversion a
+          // UNIQUEIDENTIFIER, mientras que null es exactamente lo que corresponde a
+          // una captura ad-hoc sin origen de precarga.
+          idPrecarga || null,
         ],
       );
 
@@ -272,6 +284,38 @@ export class SurveysService {
             IdCaptura: nuevoIdCaptura,
           })
           .execute();
+      }
+
+      // Cierre del ciclo de precarga: la fila de pre.Precarga de la que salio esta
+      // captura pasa a 'FINALIZADO' para que el BackOffice sepa que ya se gestiono y
+      // el movil deje de descargarla como pendiente (la descarga filtra estado
+      // 'CARGADO'). Va en la MISMA transaccion: captura y estado se confirman juntos.
+      //
+      // La guarda WHERE Estado = 'CARGADO' PRESERVA revocaciones: si el BackOffice ya
+      // marco ANULADO/RECHAZADO, no se pisa. @@ROWCOUNT = 0 no es error (la fila pudo
+      // revocarse o no existir): la captura ya esta insertada, que es lo irrecuperable;
+      // el estado es secundario y solo se registra.
+      if (idPrecarga) {
+        const filasPrecarga = await queryRunner.manager.query(
+          `
+          UPDATE pre.Precarga
+             SET Estado = 'FINALIZADO', IdUsractualiza = @1, Updated_At = GETDATE()
+           WHERE Id = @0 AND Estado = 'CARGADO';
+          SELECT @@ROWCOUNT AS Afectadas;
+        `,
+          [idPrecarga, userId],
+        );
+        const filaConteo = filasPrecarga[0] as { Afectadas: number };
+        const afectadas = Number(filaConteo?.Afectadas ?? 0);
+        if (afectadas === 0) {
+          console.warn(
+            `[PRECARGA] La precarga ${idPrecarga} no paso a FINALIZADO (0 filas): ` +
+              'ya no estaba en CARGADO (revocada/finalizada) o no existe. La captura ' +
+              'se guardo igualmente.',
+          );
+        } else {
+          console.log(`✅ [PRECARGA] ${idPrecarga} marcada FINALIZADO.`);
+        }
       }
 
       await queryRunner.commitTransaction();

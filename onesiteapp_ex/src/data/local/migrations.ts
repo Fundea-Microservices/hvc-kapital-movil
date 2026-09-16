@@ -174,5 +174,70 @@ export const migrations = schemaMigrations({
         }),
       ],
     },
+    {
+      /**
+       * Cartera de clientes asignados por BackOffice (RF-CE-07). Va en el MISMO commit
+       * que la subida de `version` a 10 en `schema.ts`: separarlos deja la app sin
+       * poder abrir la base.
+       *
+       * `addColumns` es seguro sobre una tabla con datos: WatermelonDB emite, por cada
+       * columna, `alter table add` + un `update` que rellena las filas existentes con
+       * el valor nulo del tipo + `create index if not exists`. Por eso los equipos que
+       * vienen de v9 no ven ni columnas nulas ni "no such table".
+       */
+      toVersion: 10,
+      steps: [
+        addColumns({
+          table: 'local_cliente_pendiente',
+          columns: [
+            { name: 'origen', type: 'string', isIndexed: true },
+            { name: 'documento', type: 'string', isOptional: true, isIndexed: true },
+            { name: 'cuenta', type: 'string', isOptional: true },
+            { name: 'operacion', type: 'string', isOptional: true },
+            { name: 'expediente', type: 'string', isOptional: true },
+            { name: 'ubicacion', type: 'string', isOptional: true },
+            { name: 'busqueda_normalizada', type: 'string', isOptional: true },
+            { name: 'valores_json', type: 'string', isOptional: true },
+            { name: 'estado_servidor', type: 'string', isOptional: true },
+          ],
+        }),
+        /**
+         * Dos cosas que `addColumns` no puede hacer.
+         *
+         * 1) Indexar columnas que YA existían. La tabla se creó en v4 sin un solo
+         *    índice, y son justo las tres por las que filtra la agenda. En una
+         *    instalación limpia los crea el schema; aquí hay que emitirlos a mano.
+         * 2) Etiquetar las filas preexistentes. `addColumns` deja `origen` en cadena
+         *    vacía, y una fila sin origen no pertenece a NINGUNO de los dos escritores
+         *    disjuntos: el sync no la actualizaría y `persistirCapturas` tampoco la
+         *    reconocería como propia. Todo lo que había antes de v10 se creó en campo.
+         */
+        unsafeExecuteSql(
+          'create index if not exists "local_cliente_pendiente_id_cliente" on "local_cliente_pendiente" ("id_cliente");' +
+          'create index if not exists "local_cliente_pendiente_id_encuesta" on "local_cliente_pendiente" ("id_encuesta");' +
+          'create index if not exists "local_cliente_pendiente_estado_gestion" on "local_cliente_pendiente" ("estado_gestion");' +
+          `update "local_cliente_pendiente" set "origen" = 'AD-HOC' where "origen" is null or "origen" = '';`,
+        ),
+      ],
+    },
+    {
+      /**
+       * Mensajes parametrizables por pregunta (deuda técnica). Va en el MISMO commit
+       * que la subida de `version` a 11 en `schema.ts`: separarlos deja la app sin
+       * poder abrir la base. `addColumns` con `isOptional` es seguro sobre una tabla
+       * con datos: WatermelonDB rellena las filas existentes con NULL, así que los
+       * equipos que vienen de v10 no ven ni columnas faltantes ni "no such table".
+       */
+      toVersion: 11,
+      steps: [
+        addColumns({
+          table: 'local_estructura_pregunta',
+          columns: [
+            { name: 'mensaje_error', type: 'string', isOptional: true },
+            { name: 'mensaje_notificacion', type: 'string', isOptional: true },
+          ],
+        }),
+      ],
+    },
   ],
 });
