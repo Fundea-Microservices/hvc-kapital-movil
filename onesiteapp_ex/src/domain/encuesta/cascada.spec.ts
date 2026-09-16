@@ -19,6 +19,8 @@ const pregunta = (parcial: Partial<PreguntaEncuesta> & { id: string }): Pregunta
   sintaxis_calculo: null,
   regla_visibilidad: null,
   regla_validacion: null,
+  mensaje_error: null,
+  mensaje_notificacion: null,
   ...parcial,
 });
 

@@ -44,6 +44,8 @@ export const aPreguntaEncuesta = (p: LocalEstructuraPregunta): PreguntaEncuesta 
     sintaxis_calculo: texto(p.sintaxis_calculo, raw.sintaxis_calculo),
     regla_visibilidad: texto(p.regla_visibilidad, raw.regla_visibilidad),
     regla_validacion: texto(p.regla_validacion, raw.regla_validacion),
+    mensaje_error: texto(p.mensaje_error, raw.mensaje_error),
+    mensaje_notificacion: texto(p.mensaje_notificacion, raw.mensaje_notificacion),
   };
 };
 

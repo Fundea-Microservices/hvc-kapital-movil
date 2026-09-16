@@ -29,6 +29,7 @@ import { aPreguntaEncuesta } from '../../../data/local/adapters/preguntaAdapter'
 import type { PreguntaEncuesta } from '../../../domain/encuesta/tipos';
 import { esTipoCalculo, esTipoLabel, esTipoMatriz } from '../../../domain/encuesta/tipos';
 import { parseNumeroLocal } from '../../../domain/encuesta/numeros';
+import { esNombreMarcador } from '../../../domain/agenda/precarga';
 import { resolverIdDesdeToken, sanearTokenQEnJSON } from '../../../domain/encuesta/tokens';
 import { evaluarVisibilidad } from '../../../domain/encuesta/visibilidad';
 import { aplicarCalculos as calcularDominio } from '../../../domain/encuesta/calculo';
@@ -41,6 +42,8 @@ import { aOpcionCatalogo } from '../../../data/local/adapters/preguntaAdapter';
 import * as ImagePicker from 'expo-image-picker';
 import { consumirCapturaPendiente } from '../../../data/local/services/capturaPendiente';
 import { registrarArchivoLocal } from '../../../data/local/services/multimedia.service';
+import { obtenerPrecarga } from '../../../data/local/services/precargaCliente.service';
+import { registrarAviso } from '../../../data/local/services/bitacora.service';
 
 // `NodoOpcionArbol`, `resolverNombreCatalogo` y `esOrigenApiPregunta` se eliminaron en
 // el Sprint 11: sus equivalentes viven en `domain/encuesta/catalogos.ts` (`NodoOpcion`
@@ -61,6 +64,16 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   const [isSaving, setIsSaving] = useState(false);
   const [respuestas, setRespuestas] = useState<Record<string, string>>({});
   const [instanciasMatriz, setInstanciasMatriz] = useState<Record<string, string[]>>({});
+
+  /**
+   * Preguntas que se sembraron desde la precarga del BackOffice.
+   *
+   * Sirve solo para marcarlas visualmente. Los campos siguen siendo EDITABLES: la
+   * precarga puede traer un DPI equivocado y el asesor tiene a la persona delante, así
+   * que bloquear el campo convertiría el error en un dato capturado sin escape. Quien
+   * decide si una pregunta es de solo lectura sigue siendo `es_editable` del BackOffice.
+   */
+  const [clavesPrecargadas, setClavesPrecargadas] = useState<Record<string, string>>({});
 
   /**
    * Preguntas aplanadas al contrato del dominio. El motor (visibilidad, cálculo,
@@ -222,14 +235,27 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
   const uuidInstanciaBase = route?.params?.uuidInstanciaBase || '';
   const instanciaEncuestaUuid = uuidInstanciaBase || uuid.v4().toString();
 
-  // --- MOTOR DE RESTAURACIÓN DE BORRADORES ---
-  // La restauración corre UNA sola vez: el auto-save re-escribe local_captura y el
-  // observable re-emitiría, pisando lo que el asesor está tecleando en ese momento.
+  // Cliente de la agenda desde el que se abrió el formulario. Hasta el Sprint 14 este
+  // parámetro se pasaba y NUNCA se leía; ahora es la llave del prellenado.
+  const idClienteAgenda = route?.params?.idCliente ?? null;
+
+  // --- MOTOR DE RESTAURACIÓN DE BORRADORES Y PRECARGA ---
+  // Corre UNA sola vez: el auto-save re-escribe local_captura y el observable
+  // re-emitiría, pisando lo que el asesor está tecleando en ese momento.
+  //
+  // PRECEDENCIA: el borrador local SIEMPRE gana sobre la precarga del BackOffice. Lo
+  // que el asesor escribió en campo es más reciente y más fiable que lo que se asignó
+  // desde la oficina; la precarga solo rellena las claves que aún no tienen respuesta.
   const restauradoRef = useRef(false);
   useEffect(() => {
     if (restauradoRef.current) return;
-    if (capturasExistentes) restauradoRef.current = true;
-    if (capturasExistentes && capturasExistentes.length > 0) {
+    // Se espera también a las preguntas: sin ellas no se puede saber qué id de la
+    // precarga existe ni cuál es informativo, y sembrar a ciegas metería respuestas
+    // de preguntas que ya no están en la encuesta.
+    if (!capturasExistentes || preguntas.length === 0) return;
+    restauradoRef.current = true;
+
+    const restaurarYPrecargar = async () => {
       const mapaRespuestas: Record<string, string> = {};
       const mapaMatrices: Record<string, string[]> = {};
 
@@ -264,13 +290,56 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         }
       });
 
+      // --- SIEMBRA DE LA PRECARGA ---
+      const precargados: Record<string, string> = {};
+      const valores = await obtenerPrecarga(idClienteAgenda);
+
+      valores.forEach((valor) => {
+        const pregunta = preguntas.find((p) => String(p.id) === valor.id_pregunta);
+
+        // La configuración del BackOffice puede referirse a una pregunta que ya no
+        // existe en esta versión de la encuesta. Se avisa y se sigue: descartar un
+        // campo es preferible a abortar el prellenado completo.
+        if (!pregunta) {
+          void registrarAviso(
+            'DynamicSurvey.precarga',
+            new Error('La precarga referencia una pregunta inexistente'),
+            { idPregunta: valor.id_pregunta, idCliente: idClienteAgenda },
+          );
+          return;
+        }
+
+        // Un LABEL no captura nada; sembrarlo dejaría un valor que persistirCapturas
+        // filtra pero que un borrador restaurado podría acabar enviando.
+        if (esTipoLabel(pregunta.tipo_dato)) return;
+
+        // Las hijas de matriz se identifican por `<id>_<uuidFila>` y la precarga no
+        // trae fila: sin ese contexto la respuesta iría a una clave que no existe.
+        const idMatrizPadre = pregunta.id_matriz_padre;
+        if (idMatrizPadre && idMatrizPadre !== 'null') return;
+
+        if (valor.valor.trim() === '') return;
+
+        // Aquí está la precedencia: si el borrador ya trae la clave, no se toca.
+        if (mapaRespuestas[valor.id_pregunta] !== undefined) return;
+
+        mapaRespuestas[valor.id_pregunta] = valor.valor;
+        precargados[valor.id_pregunta] = valor.valor;
+      });
+
       // Se recalculan los campos CALCULO con las fuentes restauradas para que
       // aparezcan ya resueltos al reabrir un borrador (sin necesidad de re-editar).
       // Se pasan las matrices recién reconstruidas porque el estado aún no las tiene.
       setRespuestas(aplicarCalculos(mapaRespuestas, mapaMatrices));
       setInstanciasMatriz(mapaMatrices);
-    }
-  }, [capturasExistentes]);
+      setClavesPrecargadas(precargados);
+    };
+
+    // No se propaga: un fallo del prellenado no puede impedir abrir la encuesta.
+    restaurarYPrecargar().catch((error) => {
+      console.warn('[PRECARGA] No se pudo restaurar o prellenar el formulario:', error);
+    });
+  }, [capturasExistentes, preguntas]);
 
   // VALIDADOR REACTIVO DE CAMPOS VACÍOS
   const tieneDatosLlenos = () => {
@@ -643,14 +712,39 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
           record.id_cliente = instanciaEncuestaUuid;
           record.nombre = nombreDetectado;
           record.codigo = 'AD-HOC';
+          // Marca de propiedad: esta pantalla solo es dueña de las filas AD-HOC. El
+          // sync de la cartera se limita a las 'PRECARGA', y esa separación es lo que
+          // hace que ninguno de los dos borre ni pise el trabajo del otro.
+          record.origen = 'AD-HOC';
           record.id_encuesta = idEncuestaSeguro;
           record.estado_gestion = estadoGestionCliente;
           record.motivo_rechazo = null;
         });
         await database.batch([...registrosABorrar, ...batchCreate, nuevoCliente] as any[]);
       } else {
-        const clienteActualizado = existeCliente[0].prepareUpdate((record) => {
-          record.nombre = nombreDetectado;
+        const clienteExistente = existeCliente[0];
+        const esPrecargado = clienteExistente.origen === 'PRECARGA';
+
+        /**
+         * ¿La tarjeta de cartera se quedó SIN un nombre de verdad?
+         *
+         * En una precarga, `nombre` es el que mandó BackOffice y no debe degradarse con
+         * el deducido de las respuestas: volvería a "NUEVA ENCUESTA" en cuanto el asesor
+         * tocara cualquier campo antes de contestar la pregunta del nombre.
+         *
+         * Pero el dato puede no venir: en las cargas reales la columna `nombres` llegó
+         * nula y la tarjeta cayó al DPI — o a "CLIENTE SIN NOMBRE" cuando tampoco había
+         * documento. En ese caso conservar el marcador es peor que adoptar lo que el
+         * asesor acaba de escribir, así que se permite el ascenso: marcador → nombre
+         * real. Nunca al revés.
+         */
+        const sinNombreReal = esNombreMarcador(clienteExistente.nombre, clienteExistente.documento);
+        const detectadoEsUtil = !esNombreMarcador(nombreDetectado);
+
+        const clienteActualizado = clienteExistente.prepareUpdate((record) => {
+          if (!esPrecargado || (sinNombreReal && detectadoEsUtil)) {
+            record.nombre = nombreDetectado;
+          }
           record.estado_gestion = estadoGestionCliente;
         });
         await database.batch([...registrosABorrar, ...batchCreate, clienteActualizado] as any[]);
@@ -712,7 +806,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
       if (p.es_obligatorio === 1 && vacio) return 'faltante';
       if (vacio) return 'ok'; // opcional y vacío: nada que validar
       const regla = parsearReglaValidacion(p.regla_validacion);
-      return validarValor(String(valor), regla).valido ? 'ok' : 'invalido';
+      return validarValor(String(valor), regla, p.mensaje_error).valido ? 'ok' : 'invalido';
     };
 
     secciones.forEach(seccion => {
@@ -886,7 +980,7 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                           {filas.map((uuidFila, index) => (
                             <View key={uuidFila} className="bg-white p-5 rounded-[24px] mb-4 shadow-sm border border-gray-200">
                               <View className="flex-row justify-between items-center mb-4 border-b border-gray-100 pb-3">
-                                <Text className="text-gray-400 font-black text-[10px] tracking-widest uppercase">REFERENCIA #{index + 1}</Text>
+                                <Text className="text-gray-400 font-black text-[10px] tracking-widest uppercase">REGISTRO No.{index + 1}</Text>
                                 <TouchableOpacity onPress={() => eliminarFilaMatriz(p.id, uuidFila)} className="bg-red-50 p-2 rounded-full">
                                   <Feather name="trash-2" size={16} color="#EF4444" />
                                 </TouchableOpacity>
@@ -905,6 +999,8 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                                       opciones={obtenerOpciones(hija, uuidFila)}
                                       arbolOpciones={obtenerArbolOpciones(hija, uuidFila)}
                                       reglaValidacion={hija.regla_validacion}
+                                      mensajeError={hija.mensaje_error}
+                                      mensajeNotificacion={hija.mensaje_notificacion}
                                       onChangeText={(txt) => handleRespuestaChange(`${hija.id}_${uuidFila}`, txt)}
                                       onBlur={() => { }}
                                       // Los archivos de una fila de matriz se identifican
@@ -933,10 +1029,18 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
                           etiqueta={p.etiqueta}
                           esObligatorio={p.es_obligatorio === 1}
                           esEditable={p.es_editable === 1}
+                          // El distintivo se retira en cuanto el asesor cambia el valor:
+                          // a partir de ahí el dato ya es suyo, no del BackOffice.
+                          esPrecargado={
+                            clavesPrecargadas[p.id] !== undefined &&
+                            clavesPrecargadas[p.id] === (respuestas[p.id] || '')
+                          }
                           valor={respuestas[p.id] || ''}
                           opciones={obtenerOpciones(p)}
                           arbolOpciones={obtenerArbolOpciones(p)}
                           reglaValidacion={p.regla_validacion}
+                          mensajeError={p.mensaje_error}
+                          mensajeNotificacion={p.mensaje_notificacion}
                           onChangeText={(txt) => handleRespuestaChange(p.id, txt)}
                           onBlur={() => { }}
                           mensajeInfo={esTipoCalculo(p.tipo_dato) ? "Calculado automáticamente" : undefined}

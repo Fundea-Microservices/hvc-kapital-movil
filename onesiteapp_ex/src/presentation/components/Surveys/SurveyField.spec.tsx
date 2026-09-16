@@ -1,5 +1,5 @@
 import React from 'react';
-import { renderConProveedores as render, screen } from '../../../../test/render';
+import { renderConProveedores as render, screen, fireEvent } from '../../../../test/render';
 
 import { SurveyField } from './SurveyField';
 
@@ -120,5 +120,80 @@ describe('SurveyField — mensajes al asesor', () => {
       <SurveyField {...props} tipoDato="CALCULO" mensajeInfo="Calculado automáticamente" />,
     );
     expect(screen.getByText('Calculado automáticamente')).toBeTruthy();
+  });
+
+  it('usa el MensajeError del BackOffice en vez del texto por defecto', () => {
+    // valor no vacío + regla que no cumple -> la validación al montar deja el error visible.
+    render(
+      <SurveyField
+        {...props}
+        tipoDato="TEXTO"
+        valor="123"
+        reglaValidacion="DIGITS(13)"
+        mensajeError="El DPI debe tener 13 dígitos."
+      />,
+    );
+    expect(screen.getByText('El DPI debe tener 13 dígitos.')).toBeTruthy();
+    expect(screen.queryByText('Formato incorrecto según regla institucional.')).toBeNull();
+  });
+
+  it('sin MensajeError conserva el texto por defecto de la validación', () => {
+    render(
+      <SurveyField {...props} tipoDato="TEXTO" valor="123" reglaValidacion="DIGITS(13)" />,
+    );
+    expect(screen.getByText('Formato incorrecto según regla institucional.')).toBeTruthy();
+  });
+
+  it('un obligatorio vacío muestra su mensaje solo tras salir del campo', () => {
+    render(
+      <SurveyField
+        {...props}
+        tipoDato="TEXTO"
+        esObligatorio
+        valor=""
+        mensajeError="El nombre es obligatorio."
+      />,
+    );
+    // Antes de tocar el campo no debe ensuciar el render inicial.
+    expect(screen.queryByText('El nombre es obligatorio.')).toBeNull();
+    fireEvent(screen.getByPlaceholderText('Escriba aquí...'), 'blur');
+    expect(screen.getByText('El nombre es obligatorio.')).toBeTruthy();
+  });
+});
+
+describe('SurveyField — texto en mayúsculas (TEXT_UPPERCASE)', () => {
+  it.each(['TEXT_UPPERCASE', 'TEXTO_MAYUSCULAS', 'MAYUSCULAS', 'UPPERCASE'])(
+    '%s fuerza mayúsculas al capturar',
+    tipo => {
+      const onChangeText = jest.fn();
+      render(<SurveyField {...props} tipoDato={tipo} onChangeText={onChangeText} />);
+      fireEvent.changeText(screen.getByPlaceholderText('Escriba aquí...'), 'agencia guatemala');
+      expect(onChangeText).toHaveBeenCalledWith('AGENCIA GUATEMALA');
+    },
+  );
+});
+
+describe('SurveyField — recordatorio (mensaje_notificacion)', () => {
+  it('no muestra el modal hasta que se toca el campo', () => {
+    render(<SurveyField {...props} tipoDato="TEXTO" mensajeNotificacion="Verifique la edad del cliente." />);
+    expect(screen.queryByText('Verifique la edad del cliente.')).toBeNull();
+  });
+
+  it('abre el modal al tocar el campo y no lo repite en la misma sesión', () => {
+    render(<SurveyField {...props} tipoDato="TEXTO" mensajeNotificacion="Verifique la edad del cliente." />);
+
+    fireEvent(screen.getByTestId('campo-recordatorio-touch'), 'touchStart');
+    expect(screen.getByText('Verifique la edad del cliente.')).toBeTruthy();
+
+    // Se cierra con "Entendido" y no vuelve a salir aunque se toque de nuevo.
+    fireEvent.press(screen.getByText('Entendido'));
+    fireEvent(screen.getByTestId('campo-recordatorio-touch'), 'touchStart');
+    expect(screen.queryByText('Verifique la edad del cliente.')).toBeNull();
+  });
+
+  it('sin mensaje_notificacion no ocurre nada al tocar', () => {
+    render(<SurveyField {...props} tipoDato="TEXTO" />);
+    fireEvent(screen.getByTestId('campo-recordatorio-touch'), 'touchStart');
+    expect(screen.queryByText('Recordatorio')).toBeNull();
   });
 });

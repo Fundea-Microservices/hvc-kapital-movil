@@ -30,6 +30,13 @@ jest.mock('../../../data/remote/auth.api', () => ({
   cambiarPasswordApi: jest.fn(),
 }));
 
+// Tras el cambio OBLIGATORIO, la pantalla cierra la sesión (→ Login) vía useLogout. Se
+// mockea para aseverar que se invoca, sin ejecutar el logout real (SecureStore/backend).
+const mockLogout = jest.fn(async () => undefined);
+jest.mock('../../hooks/useLogout', () => ({
+  useLogout: () => ({ executeLogout: mockLogout }),
+}));
+
 // SecureStore solo se toca en el camino de éxito del modo OBLIGATORIO (borra la
 // bandera). Se neutraliza para poder aseverar que el modo voluntario NO lo llama.
 jest.mock('expo-secure-store', () => ({
@@ -106,11 +113,10 @@ describe('CambioPasswordScreen — el botón como barrera', () => {
 });
 
 describe('CambioPasswordScreen — error del servidor', () => {
-  it('muestra el mensaje cuando la contraseña actual es incorrecta (401)', async () => {
-    // Forma de un error de axios: mensajeDeError lee response.data.message.
-    mockCambiar.mockRejectedValueOnce({
-      response: { data: { message: 'La contraseña actual no es correcta' } },
-    });
+  it('muestra "actual incorrecta" cuando el backend responde 401', async () => {
+    // `isAxiosError` reconoce el objeto por la marca `isAxiosError: true` (axios v1);
+    // el mensaje se decide por STATUS, no por el texto crudo del backend.
+    mockCambiar.mockRejectedValueOnce({ isAxiosError: true, response: { status: 401, data: {} } });
     renderPantalla();
     llenarValido();
     fireEvent.press(screen.getByText('Guardar contraseña'));
@@ -118,6 +124,21 @@ describe('CambioPasswordScreen — error del servidor', () => {
     await waitFor(() =>
       expect(screen.getByText('La contraseña actual no es correcta')).toBeTruthy()
     );
+  });
+
+  it('muestra el genérico y NO el texto crudo del backend ante un error inesperado', async () => {
+    // Un backend distinto podría devolver "NO SE LOGRO REALIZAR EL CAMBIO..."; ese texto
+    // no debe llegar al usuario: se muestra el mensaje controlado por nosotros.
+    mockCambiar.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 500, data: { message: 'NO SE LOGRO REALIZAR EL CAMBIO DE CONTRSEÑA INTENTE MAS TARDE' } },
+    });
+    renderPantalla();
+    llenarValido();
+    fireEvent.press(screen.getByText('Guardar contraseña'));
+
+    await waitFor(() => expect(screen.getByText('No se pudo actualizar la contraseña')).toBeTruthy());
+    expect(screen.queryByText(/INTENTE MAS TARDE/)).toBeNull();
   });
 });
 
@@ -129,6 +150,18 @@ describe('CambioPasswordScreen — éxito', () => {
     fireEvent.press(screen.getByText('Guardar contraseña'));
 
     await waitFor(() => expect(screen.getByText('¡Contraseña actualizada!')).toBeTruthy());
+  });
+
+  it('en el primer ingreso, "Continuar" cierra la sesión para reingresar (→ Login)', async () => {
+    mockCambiar.mockResolvedValueOnce({ message: 'Contraseña actualizada correctamente' });
+    renderPantalla();
+    llenarValido();
+    fireEvent.press(screen.getByText('Guardar contraseña'));
+
+    await waitFor(() => expect(screen.getByText('¡Contraseña actualizada!')).toBeTruthy());
+    fireEvent.press(screen.getByText('Continuar'));
+
+    await waitFor(() => expect(mockLogout).toHaveBeenCalledTimes(1));
   });
 });
 

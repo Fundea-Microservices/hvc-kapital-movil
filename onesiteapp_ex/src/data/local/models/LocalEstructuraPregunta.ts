@@ -35,4 +35,8 @@ export default class LocalEstructuraPregunta extends Model {
   @field('sintaxis_calculo') sintaxis_calculo!: string | null; // Ej: [Q1]+[Q2]
   @field('regla_visibilidad') regla_visibilidad!: string | null; // Lógica de saltos
   @field('regla_validacion') regla_validacion!: string | null; // Regex o máscaras
+
+  // Mensajes parametrizables por el BackOffice (v11)
+  @field('mensaje_error') mensaje_error!: string | null; // Texto de error custom de la validación
+  @field('mensaje_notificacion') mensaje_notificacion!: string | null; // Recordatorio (modal al enfocar)
 }
