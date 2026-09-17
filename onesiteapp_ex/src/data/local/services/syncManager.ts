@@ -1,6 +1,6 @@
 import { synchronize } from '@nozbe/watermelondb/sync';
 import { database } from '../database';
-import { apiClient, apiClientCatalogos } from '../../../core/network/apiClient';
+import { apiClient, apiClientCatalogos, registrarFalloHttp } from '../../../core/network/apiClient';
 import { Database, Q } from '@nozbe/watermelondb';
 import { useAuthStore } from '../../../presentation/store/useAuthStore';
 import MetadataSync from '../models/MetadataSync';
@@ -481,7 +481,8 @@ export const runFullSync = async () => {
     }
 
   } catch (error) {
-    console.error("❌ Error crítico durante la sincronización:", error);
+    console.error('❌ [SYNC] Ciclo abortado. Detalle de la petición que lo causó:');
+    registrarFalloHttp('SYNC', error);
     // Se registra ANTES de relanzar: este es el error que el asesor ve como "no se
     // pudo sincronizar" y del que hoy no queda ningún rastro consultable.
     await registrarError('syncManager.runFullSync', error);
