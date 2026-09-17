@@ -24,6 +24,35 @@ function leerBandera(row: Record<string, unknown>, ...alias: string[]): 0 | 1 {
   return 0;
 }
 
+/**
+ * Convierte a texto un identificador que llega de SQL Server, o devuelve null si la
+ * columna viene vacía. Se hace aquí y no con `.toString()` directo porque una sola fila
+ * con la llave en NULL —cosa que el BackOffice permite crear— tumbaba TODA la estructura
+ * con un 500 y dejaba a los asesores sin poder sincronizar.
+ */
+function aTextoId(valor: unknown): string | null {
+  if (valor === undefined || valor === null) return null;
+  const texto = String(valor).trim();
+  return texto === '' ? null : texto;
+}
+
+/**
+ * Normaliza a ISO-8601 una fecha de SQL Server (el driver la entrega como `Date`, pero
+ * puede llegar como string o NULL). Ante cualquier valor inservible devuelve el respaldo
+ * indicado en vez de lanzar: la estructura de la encuesta debe viajar igual, una fecha
+ * ausente no vale una sincronización rota.
+ */
+function aIsoODefecto(valor: unknown, respaldo: string): string {
+  if (valor instanceof Date) {
+    return Number.isNaN(valor.getTime()) ? respaldo : valor.toISOString();
+  }
+  if (typeof valor === 'string' || typeof valor === 'number') {
+    const fecha = new Date(valor);
+    if (!Number.isNaN(fecha.getTime())) return fecha.toISOString();
+  }
+  return respaldo;
+}
+
 @Injectable()
 export class SurveysService {
   constructor(
@@ -67,17 +96,35 @@ export class SurveysService {
       local_estructura_pregunta: { created: [], updated: [], deleted: [] },
     };
 
+    // Regla transversal de este método: una fila mal formada se OMITE y se registra,
+    // nunca aborta la respuesta. Un 500 aquí deja sin sincronizar a todos los asesores
+    // —el pull de la app lanza este endpoint junto a otros dos y basta uno para tumbar
+    // el ciclo completo—, mientras que omitir una encuesta huérfana solo afecta a esa.
+    const omitidas: string[] = [];
+
     // 1. Se extraen las encuestas activas
     const encuestas = await this.dataSource.query(
       `SELECT * FROM appEx_Encuesta`,
     );
     encuestas.forEach((row) => {
+      const id = aTextoId(row.IdEncuesta);
+      if (!id) {
+        omitidas.push('appEx_Encuesta sin IdEncuesta');
+        return;
+      }
       changes.local_encuesta.created.push({
-        id: row.IdEncuesta.toString(),
+        id,
         nombre: row.Nombre,
         version_activa: row.VersionActiva,
         orden: 1, // Se asigna orden por defecto
-        fecha_modificacion: row.FechaModificacion.toISOString(),
+        // FechaModificacion es NULL en filas creadas por el BackOffice sin pasar por el
+        // DEFAULT GETDATE(). Se cae a la hora del servidor: la app solo la usa como
+        // marca de versión, así que una fecha reciente es inocua, y el `.toISOString()`
+        // directo sobre NULL era justo lo que devolvía 500 en producción.
+        fecha_modificacion: aIsoODefecto(
+          row.FechaModificacion,
+          serverTimestamp,
+        ),
       });
     });
 
@@ -86,9 +133,16 @@ export class SurveysService {
       `SELECT * FROM appEx_Seccion`,
     );
     secciones.forEach((row) => {
+      const id = aTextoId(row.IdSeccion);
+      const idEncuesta = aTextoId(row.IdEncuesta);
+      // Sin encuesta padre la sección no tiene dónde colgarse en el móvil.
+      if (!id || !idEncuesta) {
+        omitidas.push(`appEx_Seccion ${id ?? '(sin id)'} sin IdEncuesta`);
+        return;
+      }
       changes.local_seccion.created.push({
-        id: row.IdSeccion.toString(),
-        id_encuesta: row.IdEncuesta.toString(),
+        id,
+        id_encuesta: idEncuesta,
         nombre: row.Titulo || row.Nombre, // <--- Cambiamos 'titulo' por 'nombre'
         orden: row.Orden,
         es_visible_default: row.EsVisibleDefault ? 1 : 0,
@@ -106,12 +160,18 @@ export class SurveysService {
     );
 
     preguntas.forEach((row) => {
+      const id = aTextoId(row.IdPregunta);
+      const idSeccion = aTextoId(row.IdSeccion);
+      // La app resuelve la encuesta de cada pregunta a través de su sección; sin
+      // IdSeccion la pregunta no se puede pintar en ningún formulario.
+      if (!id || !idSeccion) {
+        omitidas.push(`appEx_Pregunta ${id ?? '(sin id)'} sin IdSeccion`);
+        return;
+      }
       changes.local_estructura_pregunta.created.push({
-        id: row.IdPregunta.toString(),
-        id_seccion: row.IdSeccion.toString(),
-        id_matriz_padre: row.IdMatrizPadre
-          ? row.IdMatrizPadre.toString()
-          : null,
+        id,
+        id_seccion: idSeccion,
+        id_matriz_padre: aTextoId(row.IdMatrizPadre),
 
         // --- CAMPOS CRÍTICOS AGREGADOS ---
         etiqueta: row.Etiqueta, // <--- ESTO FALTABA
@@ -147,6 +207,14 @@ export class SurveysService {
         mensaje_notificacion: row.MensajeNotificacion,
       });
     });
+
+    // Queda en el log del servidor para que soporte vea QUÉ fila hay que corregir en el
+    // BackOffice; antes esto era un 500 opaco y había que leer el stack trace.
+    if (omitidas.length) {
+      console.warn(
+        `⚠️ [BACKEND] ${omitidas.length} fila(s) omitidas por datos incompletos: ${omitidas.join('; ')}`,
+      );
+    }
 
     return { changes, timestamp: serverTimestamp };
   }
