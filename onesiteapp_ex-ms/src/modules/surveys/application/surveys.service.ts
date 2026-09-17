@@ -24,6 +24,26 @@ function leerBandera(row: Record<string, unknown>, ...alias: string[]): 0 | 1 {
   return 0;
 }
 
+/**
+ * Valor que se emite cuando una fila no tiene fecha de modificación.
+*/
+const SIN_FECHA = new Date(0).toISOString();
+
+function leerFechaIso(valor: unknown, contexto: string): string {
+  if (valor instanceof Date) {
+    if (!Number.isNaN(valor.getTime())) return valor.toISOString();
+  } else if (typeof valor === 'string' && valor.trim() !== '') {
+    const fecha = new Date(valor);
+    if (!Number.isNaN(fecha.getTime())) return fecha.toISOString();
+  }
+
+  console.warn(
+    `[SYNC] ${contexto}: FechaModificacion ausente o inválida (${String(valor)}); ` +
+      `se emite ${SIN_FECHA}. Corrija el registro en el BackOffice.`,
+  );
+  return SIN_FECHA;
+}
+
 @Injectable()
 export class SurveysService {
   constructor(
@@ -77,7 +97,10 @@ export class SurveysService {
         nombre: row.Nombre,
         version_activa: row.VersionActiva,
         orden: 1, // Se asigna orden por defecto
-        fecha_modificacion: row.FechaModificacion.toISOString(),
+        fecha_modificacion: leerFechaIso(
+          row.FechaModificacion,
+          `Encuesta ${row.IdEncuesta}`,
+        ),
       });
     });
 
