@@ -23,7 +23,7 @@ import { estamparIdCaptura, contarPendientesDeSubida } from './multimedia.servic
 import { subirMultimediaPendiente } from '../../remote/services/multimediaUploader';
 import { enviarBitacora } from '../../remote/services/bitacoraSender';
 import { registrarError } from './bitacora.service';
-import { sincronizarClientesAsignados } from './clientesAsignados.service';
+import { sincronizarClientesAsignados, empujarRechazosPendientes } from './clientesAsignados.service';
 
 // ============================================================================
 // 1. FUNCIÓN PRINCIPAL DE SINCRONIZACIÓN DE ENCUESTAS (Deltas)
@@ -168,6 +168,12 @@ export const runFullSync = async () => {
           if (tarjeta.length > 0 && tarjeta[0].origen === 'PRECARGA') {
             idPrecargaEnvio = uuidBase;
           }
+          // DIAGNÓSTICO TEMPORAL: confirma en Metro/logcat por qué idPrecarga sale null.
+          // Retirar cuando FINALIZADO quede verificado en un cliente precargado real.
+          console.warn(
+            `[DIAG idPrecarga] uuidBase=${uuidBase} tarjetas=${tarjeta.length} ` +
+              `origen=${tarjeta[0]?.origen ?? '(sin fila)'} -> envio=${idPrecargaEnvio ?? 'null'}`,
+          );
         } catch (e) {
           // Un fallo aquí no puede impedir el envío de la captura, que es lo
           // irrecuperable; como mucho se pierde la marca de FINALIZADO en el servidor.
@@ -460,6 +466,10 @@ export const runFullSync = async () => {
     // Nunca lanza: un fallo de la cartera no puede arrastrar consigo el envío de
     // capturas de la fase 1, que es lo único irrecuperable del ciclo.
     await sincronizarClientesAsignados(database);
+
+    // Empuje de los RECHAZOS que el asesor hizo offline ("Cancelar Gestión"): lleva
+    // Estado='RECHAZADO' a pre.Precarga. Va después de la descarga y nunca lanza.
+    await empujarRechazosPendientes(database);
 
     // ========================================================================
     // 4. CONFIRMACIÓN (ACK) Y SELLADO DE FECHAS POR TABLA — Regla 5.5

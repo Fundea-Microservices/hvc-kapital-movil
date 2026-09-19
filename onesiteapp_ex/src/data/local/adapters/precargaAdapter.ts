@@ -70,6 +70,7 @@ export const ESTADOS_REVOCADOS = ['ANULADO', 'RECHAZADO'];
 export const gestionDesdeEstado = (estado: string | null): number => {
   switch ((estado || '').trim().toUpperCase()) {
     case 'APLICADO':
+    case 'FINALIZADO':
       return GESTION_COMPLETADO;
     case 'ANULADO':
     case 'RECHAZADO':

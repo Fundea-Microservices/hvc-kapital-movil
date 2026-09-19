@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import {
@@ -408,5 +408,48 @@ export class SurveysService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  /**
+   * Cambia el estado de una fila de pre.Precarga a RECHAZADO.
+   *
+   * Lo dispara el botón "Cancelar Gestión" del asesor (el cliente no quiere la
+   * encuesta). La app lo encola offline y lo empuja en el sync; por eso este endpoint
+   * es idempotente: un segundo intento sobre una fila ya rechazada devuelve 0 filas y
+   * success igual.
+   *
+   * WHITELIST: la app SOLO puede RECHAZAR. FINALIZADO lo pone /submit; ANULADO lo pone
+   * el BackOffice. Cualquier otro valor se rechaza para que la app no mueva la máquina
+   * de estados a su antojo.
+   *
+   * La guarda WHERE Estado = 'CARGADO' impide pisar un FINALIZADO/ANULADO puesto
+   * entretanto: solo una precarga aún pendiente puede rechazarse.
+   */
+  async actualizarEstadoPrecarga(userId: number, idPrecarga: string, estado?: string) {
+    const permitido = 'RECHAZADO';
+    if ((estado || '').trim().toUpperCase() !== permitido) {
+      throw new BadRequestException(
+        `Estado no permitido desde la app: ${estado ?? '(vacío)'}`,
+      );
+    }
+
+    const filas = (await this.dataSource.query(
+      `
+      UPDATE pre.Precarga
+         SET Estado = 'RECHAZADO', IdUsractualiza = @1, Updated_At = GETDATE()
+       WHERE Id = @0 AND Estado = 'CARGADO';
+      SELECT @@ROWCOUNT AS Afectadas;
+    `,
+      [idPrecarga, userId],
+    )) as Array<{ Afectadas: number }>;
+
+    const afectadas = Number(filas?.[0]?.Afectadas ?? 0);
+    if (afectadas === 0) {
+      console.warn(
+        `[PRECARGA] Rechazo de ${idPrecarga} no afectó filas: ya no estaba en CARGADO ` +
+          '(finalizada/anulada) o no existe.',
+      );
+    }
+    return { success: true, afectadas };
   }
 }
