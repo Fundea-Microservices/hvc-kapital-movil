@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, Image, FlatList, Dimensions, ActivityIndicator, TouchableOpacity, Linking } from 'react-native';
 import axios from 'axios';
+import { registrarFalloHttp } from '../../../core/network/apiClient';
 
 const { width } = Dimensions.get('window');
 // Tarjeta al 85% de la pantalla para que asome la siguiente
@@ -73,7 +74,7 @@ export const DynamicCarousel = () => {
           }
         }
       } catch (error) {
-        console.error('❌ Error API Carrusel:', error);
+        registrarFalloHttp('CARRUSEL', error);
       } finally {
         setLoading(false);
       }

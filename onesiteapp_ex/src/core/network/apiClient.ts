@@ -240,7 +240,151 @@ const processQueue = (error: unknown, token: string | null = null) => {
 };
 
 // ============================================================================
-// 2. INTERCEPTOR DE RESPUESTAS (Unificado: Logs + Refresh Token + 403)
+// 2. DIAGNÓSTICO DE FALLOS HTTP (compartido por todos los clientes)
+// ============================================================================
+
+/**
+ * Claves cuyo valor NUNCA se escribe en el log.
+ *
+ */
+const CLAVES_SENSIBLES = [
+  'password', 'passwordactual', 'passwordnueva', 'confirmarpassword', 'contrasena',
+  'token', 'token_sesion', 'refreshtoken', 'refresh_token', 'apikey', 'authorization',
+  'devicetoken', 'x-device-token',
+];
+
+const censurar = (valor: unknown, profundidad = 0): unknown => {
+  if (valor === null || typeof valor !== 'object' || profundidad > 3) return valor;
+
+  if (Array.isArray(valor)) {
+    const muestra = valor.slice(0, 5).map((elemento) => censurar(elemento, profundidad + 1));
+    return valor.length > 5 ? [...muestra, `…(${valor.length} elementos en total)`] : muestra;
+  }
+
+  const salida: Record<string, unknown> = {};
+  for (const [clave, contenido] of Object.entries(valor as Record<string, unknown>)) {
+    salida[clave] = CLAVES_SENSIBLES.includes(clave.toLowerCase())
+      ? '«oculto»'
+      : censurar(contenido, profundidad + 1);
+  }
+  return salida;
+};
+
+/** Tope por línea. Más allá, logcat corta y se pierde justo el final del mensaje. */
+const LIMITE_CUERPO = 700;
+
+/**
+ * Convierte un cuerpo HTTP —de petición o de respuesta— en una línea legible.
+ *
+ */
+const resumirCuerpo = (cuerpo: unknown): string => {
+  if (cuerpo === undefined || cuerpo === null || cuerpo === '') return '(vacío)';
+
+  // FormData envuelve binarios y no es serializable: volcarlo llenaría el log de ruido.
+  if (typeof FormData !== 'undefined' && cuerpo instanceof FormData) {
+    return '(FormData — subida de archivo)';
+  }
+
+  let texto: string;
+  if (typeof cuerpo === 'string') {
+    try {
+      texto = JSON.stringify(censurar(JSON.parse(cuerpo)));
+    } catch {
+      texto = cuerpo;
+    }
+  } else {
+    try {
+      texto = JSON.stringify(censurar(cuerpo));
+    } catch {
+      texto = String(cuerpo);
+    }
+  }
+
+  return texto.length > LIMITE_CUERPO
+    ? `${texto.slice(0, LIMITE_CUERPO)}… (${texto.length} caracteres)`
+    : texto;
+};
+
+/**
+ * Traduce el código HTTP a la causa que realmente lo produce en ESTA aplicación.
+ *
+ * El código por sí solo no dice dónde mirar, y la diferencia entre "el backend no
+ * tiene esa ruta" y "el backend reventó por dentro" cambia por completo a quién le
+ * toca arreglarlo.
+ */
+const pistaPorEstado = (estado: number, destino: string): string | null => {
+  switch (estado) {
+    case 400:
+      return 'El cuerpo no pasó la validación del servidor. Compare «Enviado» contra el DTO del endpoint.';
+    case 401:
+      return 'Falta o no vale alguna credencial. La línea «Auth» de arriba dice cuáles viajaron: ' +
+        'si device=no, el equipo no está enrolado; si sesión=no, no hay token_sesion guardado.';
+    case 403:
+      return 'Autenticado pero sin permiso: equipo bloqueado desde el BackOffice o versión obsoleta.';
+    case 404:
+      return `Esa ruta no existe en el host. Revise el prefijo de "${destino}" ` +
+        '(debe incluir /api/v1 para el microservicio) contra el @Controller del backend.';
+    case 409:
+      return 'Conflicto de estado: el recurso ya existe o fue modificado por otro dispositivo.';
+    case 413:
+      return 'El archivo supera el tamaño que acepta el servidor.';
+    case 500:
+      return 'El fallo es DENTRO del servidor, no en la petición. El detalle real está en el log ' +
+        'del microservicio; aquí solo llega el mensaje genérico. Suele ser SQL o un campo nulo inesperado.';
+    default:
+      return null;
+  }
+};
+
+/**
+ * Registro detallado de un fallo HTTP, con el mismo formato en toda la aplicación.
+ *
+ * Antes cada `catch` hacía `console.error('mensaje', error)`, y en el log de Metro un
+ * AxiosError se imprime como `[AxiosError: Request failed with status code 500]`: ni la
+ * URL, ni el cuerpo que respondió el servidor, ni qué se le mandó. Con varias peticiones
+ * en paralelo (la sincronización lanza tres a la vez) era imposible saber cuál falló.
+ *
+ * `etiqueta` identifica el subsistema para poder filtrar el logcat por ella.
+ */
+export const registrarFalloHttp = (etiqueta: string, error: unknown): void => {
+  if (!axios.isAxiosError(error)) {
+    console.error(`❌ [${etiqueta}] Error ajeno a HTTP:`, error);
+    return;
+  }
+
+  const config = error.config;
+  const metodo = (config?.method ?? 'get').toUpperCase();
+  const destino = `${config?.baseURL ?? ''}${config?.url ?? ''}`;
+
+  if (!error.response) {
+    console.error(`❌ [${etiqueta}] SIN RESPUESTA — ${metodo} ${destino}`);
+    console.error(`❌ [${etiqueta}] Código axios: ${error.code ?? '(ninguno)'} | ${error.message}`);
+    return;
+  }
+
+  const { status, statusText, data } = error.response;
+  console.error(`❌ [${etiqueta}] HTTP ${status} ${statusText ?? ''} — ${metodo} ${destino}`);
+  console.error(`❌ [${etiqueta}] Responde: ${resumirCuerpo(data)}`);
+
+  if (config?.data !== undefined) {
+    console.error(`❌ [${etiqueta}] Enviado: ${resumirCuerpo(config.data)}`);
+  }
+
+  // Presencia de las credenciales, nunca su valor: es el dato que distingue un 401 de
+  // "no enrolado" de uno de "contraseña incorrecta", y hoy había que adivinarlo.
+  const cabeceras = (config?.headers ?? {}) as Record<string, unknown>;
+  console.error(
+    `❌ [${etiqueta}] Auth: device=${cabeceras['x-device-token'] ? 'sí' : 'no'} ` +
+    `sesión=${cabeceras['Authorization'] ? 'sí' : 'no'} ` +
+    `usuario=${cabeceras['x-user-id'] ?? '(ninguno)'}`,
+  );
+
+  const pista = pistaPorEstado(status, destino);
+  if (pista) console.error(`❌ [${etiqueta}] Pista: ${pista}`);
+};
+
+// ============================================================================
+// 3. INTERCEPTOR DE RESPUESTAS (Unificado: Logs + Refresh Token + 403)
 // ============================================================================
 const responseInterceptorInterceptor = async (error: unknown) => {
   // Axios no garantiza la forma del error (puede ser de red, de config o del servidor);
@@ -249,6 +393,10 @@ const responseInterceptorInterceptor = async (error: unknown) => {
 
   const originalRequest = error.config as (InternalAxiosRequestConfig & { _retry?: boolean }) | undefined;
   const currentInstance = originalRequest?.baseURL === baseCatalogosURL ? apiClientCatalogos : apiClient;
+
+  // TODO fallo queda registrado aquí, con respuesta del servidor incluida, antes de
+  // que cualquier `catch` de pantalla lo convierta en un mensaje para el usuario.
+  registrarFalloHttp('RED', error);
 
   /**
    * "Network Error" es el mensaje que da axios cuando **no hubo respuesta**: la
@@ -259,13 +407,8 @@ const responseInterceptorInterceptor = async (error: unknown) => {
    *   3. HTTPS con certificado autofirmado o que no corresponde al host.
    *   4. HTTP en claro sin `usesCleartextTraffic` (aquí ya está declarado).
    *   5. El puerto está cerrado o el servicio no escucha.
-   * Sin este bloque, el usuario solo ve el modal rojo y no queda rastro de a dónde
-   * se intentó llegar.
    */
   if (!error.response) {
-    console.error('❌ [RED] Sin respuesta del servidor — la petición no llegó.');
-    console.error(`❌ [RED] Destino: ${originalRequest?.baseURL ?? ''}${originalRequest?.url ?? ''}`);
-    console.error(`❌ [RED] Código: ${error.code ?? '(ninguno)'} | Mensaje: ${error.message}`);
     console.error(
       '❌ [RED] Verifique, en este orden: que el host resuelva, que el dispositivo ' +
       'esté en la misma red, y el certificado si es HTTPS.',
@@ -396,11 +539,8 @@ apiClientCatalogos.interceptors.response.use((response) => response, responseInt
 apiClientAgenda.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-    if (!error.response) {
-      console.warn('[AGENDA] Sin respuesta del servicio de cartera.');
-      console.warn(`[AGENDA] Destino: ${error.config?.baseURL ?? ''}`);
-      console.warn(`[AGENDA] Código: ${error.code} | Mensaje: ${error.message}`);
-    } else if (error.response.status === 401) {
+    registrarFalloHttp('AGENDA', error);
+    if (error.response?.status === 401) {
       console.warn(
         '[AGENDA] 401 del servicio de cartera: la cabecera «apikey» falta o no es ' +
           'válida. NO es la sesión del asesor — revise ' +
