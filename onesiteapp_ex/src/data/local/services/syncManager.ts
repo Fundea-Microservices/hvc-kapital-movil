@@ -171,8 +171,11 @@ export const runFullSync = async () => {
           // DIAGNÓSTICO TEMPORAL: confirma en Metro/logcat por qué idPrecarga sale null.
           // Retirar cuando FINALIZADO quede verificado en un cliente precargado real.
           console.warn(
-            `[DIAG idPrecarga] uuidBase=${uuidBase} tarjetas=${tarjeta.length} ` +
-              `origen=${tarjeta[0]?.origen ?? '(sin fila)'} -> envio=${idPrecargaEnvio ?? 'null'}`,
+            '[DIAG idPrecarga] uuidBase=%s tarjetas=%s origen=%s -> envio=%s',
+            uuidBase,
+            tarjeta.length,
+            tarjeta[0]?.origen ?? '(sin fila)',
+            idPrecargaEnvio ?? 'null',
           );
         } catch (e) {
           // Un fallo aquí no puede impedir el envío de la captura, que es lo
