@@ -81,4 +81,28 @@ export class SurveysController {
     // 3. Ejecución del servicio (Ya enviamos un número real, nunca un NaN/NULL)
     return await this.surveysService.submitSurvey(Number(finalUserId), payload);
   }
+
+  /**
+   * Cambia el estado de una precarga (hoy solo RECHAZADO, desde "Cancelar Gestión").
+   * El servicio valida la whitelist; aquí solo se exige dispositivo autenticado e
+   * IdUsuario, igual que /submit.
+   */
+  @Post('precarga-estado')
+  async precargaEstado(
+    @Body() body: { idPrecarga?: string; estado?: string },
+    @Headers('x-device-token') deviceToken: string,
+    @Headers('x-user-id') headerUserId: string,
+  ) {
+    if (!deviceToken)
+      throw new UnauthorizedException('Dispositivo no autenticado');
+    const userId = Number(headerUserId);
+    if (!body?.idPrecarga || isNaN(userId)) {
+      throw new BadRequestException('Falta idPrecarga o IdUsuario válido');
+    }
+    return await this.surveysService.actualizarEstadoPrecarga(
+      userId,
+      body.idPrecarga,
+      body.estado,
+    );
+  }
 }

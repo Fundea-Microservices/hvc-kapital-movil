@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import {
@@ -25,23 +25,32 @@ function leerBandera(row: Record<string, unknown>, ...alias: string[]): 0 | 1 {
 }
 
 /**
- * Valor que se emite cuando una fila no tiene fecha de modificación.
-*/
-const SIN_FECHA = new Date(0).toISOString();
+ * Convierte a texto un identificador que llega de SQL Server, o devuelve null si la
+ * columna viene vacía. Se hace aquí y no con `.toString()` directo porque una sola fila
+ * con la llave en NULL —cosa que el BackOffice permite crear— tumbaba TODA la estructura
+ * con un 500 y dejaba a los asesores sin poder sincronizar.
+ */
+function aTextoId(valor: unknown): string | null {
+  if (valor === undefined || valor === null) return null;
+  const texto = String(valor).trim();
+  return texto === '' ? null : texto;
+}
 
-function leerFechaIso(valor: unknown, contexto: string): string {
+/**
+ * Normaliza a ISO-8601 una fecha de SQL Server (el driver la entrega como `Date`, pero
+ * puede llegar como string o NULL). Ante cualquier valor inservible devuelve el respaldo
+ * indicado en vez de lanzar: la estructura de la encuesta debe viajar igual, una fecha
+ * ausente no vale una sincronización rota.
+ */
+function aIsoODefecto(valor: unknown, respaldo: string): string {
   if (valor instanceof Date) {
-    if (!Number.isNaN(valor.getTime())) return valor.toISOString();
-  } else if (typeof valor === 'string' && valor.trim() !== '') {
+    return Number.isNaN(valor.getTime()) ? respaldo : valor.toISOString();
+  }
+  if (typeof valor === 'string' || typeof valor === 'number') {
     const fecha = new Date(valor);
     if (!Number.isNaN(fecha.getTime())) return fecha.toISOString();
   }
-
-  console.warn(
-    `[SYNC] ${contexto}: FechaModificacion ausente o inválida (${String(valor)}); ` +
-      `se emite ${SIN_FECHA}. Corrija el registro en el BackOffice.`,
-  );
-  return SIN_FECHA;
+  return respaldo;
 }
 
 @Injectable()
@@ -87,19 +96,34 @@ export class SurveysService {
       local_estructura_pregunta: { created: [], updated: [], deleted: [] },
     };
 
+    // Regla transversal de este método: una fila mal formada se OMITE y se registra,
+    // nunca aborta la respuesta. Un 500 aquí deja sin sincronizar a todos los asesores
+    // —el pull de la app lanza este endpoint junto a otros dos y basta uno para tumbar
+    // el ciclo completo—, mientras que omitir una encuesta huérfana solo afecta a esa.
+    const omitidas: string[] = [];
+
     // 1. Se extraen las encuestas activas
     const encuestas = await this.dataSource.query(
       `SELECT * FROM appEx_Encuesta`,
     );
     encuestas.forEach((row) => {
+      const id = aTextoId(row.IdEncuesta);
+      if (!id) {
+        omitidas.push('appEx_Encuesta sin IdEncuesta');
+        return;
+      }
       changes.local_encuesta.created.push({
-        id: row.IdEncuesta.toString(),
+        id,
         nombre: row.Nombre,
         version_activa: row.VersionActiva,
         orden: 1, // Se asigna orden por defecto
-        fecha_modificacion: leerFechaIso(
+        // FechaModificacion es NULL en filas creadas por el BackOffice sin pasar por el
+        // DEFAULT GETDATE(). Se cae a la hora del servidor: la app solo la usa como
+        // marca de versión, así que una fecha reciente es inocua, y el `.toISOString()`
+        // directo sobre NULL era justo lo que devolvía 500 en producción.
+        fecha_modificacion: aIsoODefecto(
           row.FechaModificacion,
-          `Encuesta ${row.IdEncuesta}`,
+          serverTimestamp,
         ),
       });
     });
@@ -109,9 +133,16 @@ export class SurveysService {
       `SELECT * FROM appEx_Seccion`,
     );
     secciones.forEach((row) => {
+      const id = aTextoId(row.IdSeccion);
+      const idEncuesta = aTextoId(row.IdEncuesta);
+      // Sin encuesta padre la sección no tiene dónde colgarse en el móvil.
+      if (!id || !idEncuesta) {
+        omitidas.push(`appEx_Seccion ${id ?? '(sin id)'} sin IdEncuesta`);
+        return;
+      }
       changes.local_seccion.created.push({
-        id: row.IdSeccion.toString(),
-        id_encuesta: row.IdEncuesta.toString(),
+        id,
+        id_encuesta: idEncuesta,
         nombre: row.Titulo || row.Nombre, // <--- Cambiamos 'titulo' por 'nombre'
         orden: row.Orden,
         es_visible_default: row.EsVisibleDefault ? 1 : 0,
@@ -129,12 +160,18 @@ export class SurveysService {
     );
 
     preguntas.forEach((row) => {
+      const id = aTextoId(row.IdPregunta);
+      const idSeccion = aTextoId(row.IdSeccion);
+      // La app resuelve la encuesta de cada pregunta a través de su sección; sin
+      // IdSeccion la pregunta no se puede pintar en ningún formulario.
+      if (!id || !idSeccion) {
+        omitidas.push(`appEx_Pregunta ${id ?? '(sin id)'} sin IdSeccion`);
+        return;
+      }
       changes.local_estructura_pregunta.created.push({
-        id: row.IdPregunta.toString(),
-        id_seccion: row.IdSeccion.toString(),
-        id_matriz_padre: row.IdMatrizPadre
-          ? row.IdMatrizPadre.toString()
-          : null,
+        id,
+        id_seccion: idSeccion,
+        id_matriz_padre: aTextoId(row.IdMatrizPadre),
 
         // --- CAMPOS CRÍTICOS AGREGADOS ---
         etiqueta: row.Etiqueta, // <--- ESTO FALTABA
@@ -170,6 +207,14 @@ export class SurveysService {
         mensaje_notificacion: row.MensajeNotificacion,
       });
     });
+
+    // Queda en el log del servidor para que soporte vea QUÉ fila hay que corregir en el
+    // BackOffice; antes esto era un 500 opaco y había que leer el stack trace.
+    if (omitidas.length) {
+      console.warn(
+        `⚠️ [BACKEND] ${omitidas.length} fila(s) omitidas por datos incompletos: ${omitidas.join('; ')}`,
+      );
+    }
 
     return { changes, timestamp: serverTimestamp };
   }
@@ -363,5 +408,48 @@ export class SurveysService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  /**
+   * Cambia el estado de una fila de pre.Precarga a RECHAZADO.
+   *
+   * Lo dispara el botón "Cancelar Gestión" del asesor (el cliente no quiere la
+   * encuesta). La app lo encola offline y lo empuja en el sync; por eso este endpoint
+   * es idempotente: un segundo intento sobre una fila ya rechazada devuelve 0 filas y
+   * success igual.
+   *
+   * WHITELIST: la app SOLO puede RECHAZAR. FINALIZADO lo pone /submit; ANULADO lo pone
+   * el BackOffice. Cualquier otro valor se rechaza para que la app no mueva la máquina
+   * de estados a su antojo.
+   *
+   * La guarda WHERE Estado = 'CARGADO' impide pisar un FINALIZADO/ANULADO puesto
+   * entretanto: solo una precarga aún pendiente puede rechazarse.
+   */
+  async actualizarEstadoPrecarga(userId: number, idPrecarga: string, estado?: string) {
+    const permitido = 'RECHAZADO';
+    if ((estado || '').trim().toUpperCase() !== permitido) {
+      throw new BadRequestException(
+        `Estado no permitido desde la app: ${estado ?? '(vacío)'}`,
+      );
+    }
+
+    const filas = (await this.dataSource.query(
+      `
+      UPDATE pre.Precarga
+         SET Estado = 'RECHAZADO', IdUsractualiza = @1, Updated_At = GETDATE()
+       WHERE Id = @0 AND Estado = 'CARGADO';
+      SELECT @@ROWCOUNT AS Afectadas;
+    `,
+      [idPrecarga, userId],
+    )) as Array<{ Afectadas: number }>;
+
+    const afectadas = Number(filas?.[0]?.Afectadas ?? 0);
+    if (afectadas === 0) {
+      console.warn(
+        `[PRECARGA] Rechazo de ${idPrecarga} no afectó filas: ya no estaba en CARGADO ` +
+          '(finalizada/anulada) o no existe.',
+      );
+    }
+    return { success: true, afectadas };
   }
 }

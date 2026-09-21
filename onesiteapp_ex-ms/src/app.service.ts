@@ -21,7 +21,6 @@ export interface InfoApi {
   ultimaActualizacion: string;
 }
 
-
 @Injectable()
 export class AppService {
   private readonly logger = new Logger(AppService.name);
@@ -33,8 +32,7 @@ export class AppService {
   private readonly zonaHoraria =
     (process.env.API_ZONA_HORARIA || '').trim() || ZONA_HORARIA_POR_DEFECTO;
 
-  constructor() {   
-  }
+  constructor() {}
 
   obtenerInfo(): InfoApi {
     const ahora = new Date();

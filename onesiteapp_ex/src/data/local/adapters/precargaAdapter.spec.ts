@@ -1,4 +1,4 @@
-import { aClienteAsignado, ETIQUETAS_POR_DEFECTO } from './precargaAdapter';
+import { aClienteAsignado, ETIQUETAS_POR_DEFECTO, gestionDesdeEstado } from './precargaAdapter';
 
 describe('respaldo en valores cuando la columna plana llega nula', () => {
   // Ambos payloads son copias literales de GET /api/onesiteex/precarga (2026-09-08).
@@ -73,5 +73,22 @@ describe('respaldo en valores cuando la columna plana llega nula', () => {
       catalogo,
     );
     expect(cliente?.nombre).toBe('999');
+  });
+});
+
+describe('gestionDesdeEstado (máquina de estados del BackOffice)', () => {
+  it('CARGADO / desconocido -> pendiente (0)', () => {
+    expect(gestionDesdeEstado('CARGADO')).toBe(0);
+    expect(gestionDesdeEstado('lo-que-sea')).toBe(0);
+    expect(gestionDesdeEstado(null)).toBe(0);
+  });
+  it('FINALIZADO y APLICADO -> completado (1)', () => {
+    expect(gestionDesdeEstado('FINALIZADO')).toBe(1);
+    expect(gestionDesdeEstado('finalizado')).toBe(1);
+    expect(gestionDesdeEstado('APLICADO')).toBe(1);
+  });
+  it('ANULADO y RECHAZADO -> retirado (2)', () => {
+    expect(gestionDesdeEstado('ANULADO')).toBe(2);
+    expect(gestionDesdeEstado('RECHAZADO')).toBe(2);
   });
 });

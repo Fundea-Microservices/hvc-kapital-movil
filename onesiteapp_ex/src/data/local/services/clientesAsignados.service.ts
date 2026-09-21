@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { Database, Q } from '@nozbe/watermelondb';
-import { apiClientAgenda, agendaConfigurada } from '../../../core/network/apiClient';
+import { apiClient, apiClientAgenda, agendaConfigurada } from '../../../core/network/apiClient';
 import LocalClientePendiente from '../models/LocalClientePendiente';
 import LocalEstructuraPregunta from '../models/LocalEstructuraPregunta';
 import MetadataSync from '../models/MetadataSync';
@@ -262,7 +262,10 @@ const descargarCartera = async (
   // encuesta, el /submit marca su fila de pre.Precarga como FINALIZADO, así que deja de
   // entrar en este filtro y no se re-descarga como pendiente. Tunable por si el
   // servicio cambia el nombre del estado; vacío = no enviar (trae todos).
-  const estadoDescarga = (await obtenerParametro('AGENDA_ESTADO_DESCARGA', 'CARGADO')).trim();
+  // Vacío por defecto: se traen TODOS los estados. Hace falta para DETECTAR las
+  // revocaciones del admin (ANULADO) y los rechazos (RECHAZADO) por su Estado, no por
+  // ausencia. FINALIZADO mapea a completado (oculto) y no reaparece como pendiente.
+  const estadoDescarga = (await obtenerParametro('AGENDA_ESTADO_DESCARGA', '')).trim();
 
   /**
    * Sin identidad NO se pide nada. El servicio, consultado sin filtro de asesor,
@@ -477,6 +480,47 @@ export const sincronizarClientesAsignados = async (
  * Se diferencia del ciclo automático SOLO en el ámbito: aquí se acota a una encuesta,
  * y con ello también el conjunto donde se buscan bajas por ausencia.
  */
+/**
+ * Empuja al servidor los RECHAZOS que el asesor hizo offline.
+ *
+ * "Cancelar Gestión" marca la fila local (estado_gestion=2 + motivo) sin red. Esta
+ * fase, en el sync, lleva ese rechazo a pre.Precarga vía el backend propio
+ * (POST /surveys/precarga-estado), que hace UPDATE ... Estado='RECHAZADO'
+ * WHERE Estado='CARGADO'. Es la contraparte de FINALIZADO, que viaja en /submit.
+ *
+ * Pendientes = filas PRECARGA canceladas cuyo estado_servidor aún no es RECHAZADO.
+ * Tras un 200 se sella estado_servidor='RECHAZADO' para no re-empujar. NUNCA lanza:
+ * un fallo aquí no puede tumbar el ciclo; se reintenta al siguiente sync.
+ */
+export const empujarRechazosPendientes = async (databaseInstance: Database): Promise<void> => {
+  try {
+    const coleccion = databaseInstance.collections.get<LocalClientePendiente>(TABLA_AGENDA);
+    const canceladas = await coleccion.query(Q.where('estado_gestion', 2)).fetch();
+    const pendientes = canceladas.filter(
+      (r) => r.origen === 'PRECARGA' && (r.estado_servidor || '').toUpperCase() !== 'RECHAZADO',
+    );
+
+    for (const fila of pendientes) {
+      try {
+        await apiClient.post('/surveys/precarga-estado', {
+          idPrecarga: fila.id_cliente,
+          estado: 'RECHAZADO',
+        });
+        await databaseInstance.write(async () => {
+          await fila.update((r) => {
+            r.estado_servidor = 'RECHAZADO';
+          });
+        });
+      } catch (e) {
+        // Se reintenta en el próximo ciclo; no aborta el resto de la cola.
+        await registrarError('clientesAsignados.rechazo', e, { idPrecarga: fila.id_cliente });
+      }
+    }
+  } catch (e) {
+    console.warn('[AGENDA] No se pudieron empujar los rechazos pendientes:', e);
+  }
+};
+
 export const recargarEncuesta = async (
   databaseInstance: Database,
   idEncuesta: string,
