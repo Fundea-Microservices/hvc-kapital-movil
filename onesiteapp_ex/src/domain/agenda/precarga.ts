@@ -247,3 +247,41 @@ export const construirTextoBusqueda = (campos: CamposBuscables): string =>
     .map((c) => normalizarComparacion(c))
     .filter((c) => c !== '')
     .join(' ');
+
+/**
+ * Normaliza una fecha de la precarga al formato interno de la app: `YYYY-MM-DD`.
+ *
+ * POR QUÉ
+ * La app guarda fechas como `YYYY-MM-DD` y las pinta con `new Date(valor + 'T00:00:00')`.
+ * El BackOffice manda la fecha de precarga en `DD/MM/YYYY` (ej. `01/01/1980`) o, según
+ * el origen, como datetime ISO con hora. Sembrar ese valor tal cual producía
+ * "Invalid Date" en el input. Aquí se lleva a `YYYY-MM-DD` antes de sembrar.
+ *
+ * Ante algo que no se puede interpretar devuelve `null`: el llamador NO siembra y el
+ * campo queda vacío ("Seleccione una fecha…") en vez de mostrar "Invalid Date" — la
+ * regla de degradar visible del prellenado.
+ */
+export const normalizarFechaISO = (valor: string | null | undefined): string | null => {
+  const v = (valor ?? '').trim();
+  if (v === '') return null;
+
+  // Ya es ISO (fecha o datetime): se toma la parte de fecha.
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(v);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+
+  // DD/MM/YYYY o D/M/YYYY (formato del BackOffice); también día-primero con guiones.
+  const dmy = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(v);
+  if (dmy) {
+    const dia = dmy[1].padStart(2, '0');
+    const mes = dmy[2].padStart(2, '0');
+    if (Number(mes) >= 1 && Number(mes) <= 12 && Number(dia) >= 1 && Number(dia) <= 31) {
+      return `${dmy[3]}-${mes}-${dia}`;
+    }
+  }
+
+  // Último recurso: que lo intente Date. Si es válido se formatea en UTC (no correr el
+  // día por zona horaria). Si no, null — nunca "Invalid Date".
+  const t = Date.parse(v);
+  if (!Number.isNaN(t)) return new Date(t).toISOString().split('T')[0];
+  return null;
+};

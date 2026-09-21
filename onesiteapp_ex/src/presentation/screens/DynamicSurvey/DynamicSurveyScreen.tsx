@@ -29,7 +29,7 @@ import { aPreguntaEncuesta } from '../../../data/local/adapters/preguntaAdapter'
 import type { PreguntaEncuesta } from '../../../domain/encuesta/tipos';
 import { esTipoCalculo, esTipoLabel, esTipoMatriz } from '../../../domain/encuesta/tipos';
 import { parseNumeroLocal } from '../../../domain/encuesta/numeros';
-import { esNombreMarcador } from '../../../domain/agenda/precarga';
+import { esNombreMarcador, normalizarFechaISO } from '../../../domain/agenda/precarga';
 import { resolverIdDesdeToken, sanearTokenQEnJSON } from '../../../domain/encuesta/tokens';
 import { evaluarVisibilidad } from '../../../domain/encuesta/visibilidad';
 import { aplicarCalculos as calcularDominio } from '../../../domain/encuesta/calculo';
@@ -323,8 +323,19 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
         // Aquí está la precedencia: si el borrador ya trae la clave, no se toca.
         if (mapaRespuestas[valor.id_pregunta] !== undefined) return;
 
-        mapaRespuestas[valor.id_pregunta] = valor.valor;
-        precargados[valor.id_pregunta] = valor.valor;
+        // Las fechas llegan como DD/MM/YYYY (o ISO) y el input las espera en
+        // YYYY-MM-DD; sin normalizar mostraban "Invalid Date". Si no se puede
+        // interpretar, no se siembra (el campo queda vacío en vez de romper).
+        const tipo = (pregunta.tipo_dato || '').trim().toUpperCase();
+        let valorSembrado = valor.valor;
+        if (tipo === 'FECHA' || tipo === 'DATE') {
+          const fechaNorm = normalizarFechaISO(valor.valor);
+          if (!fechaNorm) return;
+          valorSembrado = fechaNorm;
+        }
+
+        mapaRespuestas[valor.id_pregunta] = valorSembrado;
+        precargados[valor.id_pregunta] = valorSembrado;
       });
 
       // Se recalculan los campos CALCULO con las fuentes restauradas para que

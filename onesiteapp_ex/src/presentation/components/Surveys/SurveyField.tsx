@@ -268,7 +268,11 @@ export const SurveyField = ({
       }
 
       case 'FECHA':
-      case 'DATE':
+      case 'DATE': {
+        // Una fecha inválida (formato inesperado) NO debe pintar "Invalid Date":
+        // se degrada al placeholder. `+ 'T00:00:00'` fija medianoche local.
+        const fechaCandidata = valor ? new Date(`${valor}T00:00:00`) : null;
+        const fechaValida = fechaCandidata && !Number.isNaN(fechaCandidata.getTime()) ? fechaCandidata : null;
         return (
           <View>
             <TouchableOpacity
@@ -276,14 +280,14 @@ export const SurveyField = ({
               onPress={() => { Keyboard.dismiss(); setShowDatePicker(true); }}
               className={`border-2 p-4 rounded-xl flex-row justify-between items-center ${containerClasses}`}
             >
-              <Text className={valor ? 'text-gray-800' : 'text-gray-400'}>
-                {valor ? new Date(valor + 'T00:00:00').toLocaleDateString('es-ES') : 'Seleccione una fecha...'}
+              <Text className={fechaValida ? 'text-gray-800' : 'text-gray-400'}>
+                {fechaValida ? fechaValida.toLocaleDateString('es-ES') : 'Seleccione una fecha...'}
               </Text>
               <Feather name="calendar" size={18} color="#1E3A8A" />
             </TouchableOpacity>
             {showDatePicker && (
               <DateTimePicker
-                value={valor ? new Date(valor) : new Date()}
+                value={fechaValida ?? new Date()}
                 mode="date"
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                 onChange={handleDateChange}
@@ -291,6 +295,7 @@ export const SurveyField = ({
             )}
           </View>
         );
+      }
 
       case 'RADIO':
         return (

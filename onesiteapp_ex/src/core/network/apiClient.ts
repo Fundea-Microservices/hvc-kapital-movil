@@ -409,12 +409,6 @@ const responseInterceptorInterceptor = async (error: unknown) => {
    *   5. El puerto está cerrado o el servicio no escucha.
    */
   if (!error.response) {
-<<<<<<< HEAD
-=======
-    console.error('❌ [RED] Sin respuesta del servidor — la petición no llegó.');
-    console.error('❌ [RED] Destino:', originalRequest?.baseURL ?? '', originalRequest?.url ?? '');
-    console.error('❌ [RED] Código:', error.code ?? '(ninguno)', '| Mensaje:', error.message);
->>>>>>> 4de956f (configuraciones para estados de encuestas)
     console.error(
       '❌ [RED] Verifique, en este orden: que el host resuelva, que el dispositivo ' +
       'esté en la misma red, y el certificado si es HTTPS.',
@@ -545,16 +539,8 @@ apiClientCatalogos.interceptors.response.use((response) => response, responseInt
 apiClientAgenda.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
-<<<<<<< HEAD
     registrarFalloHttp('AGENDA', error);
     if (error.response?.status === 401) {
-=======
-    if (!error.response) {
-      console.warn('[AGENDA] Sin respuesta del servicio de cartera.');
-      console.warn('[AGENDA] Destino:', error.config?.baseURL ?? '');
-      console.warn('[AGENDA] Código:', error.code, '| Mensaje:', error.message);
-    } else if (error.response.status === 401) {
->>>>>>> 4de956f (configuraciones para estados de encuestas)
       console.warn(
         '[AGENDA] 401 del servicio de cartera: la cabecera «apikey» falta o no es ' +
           'válida. NO es la sesión del asesor — revise ' +

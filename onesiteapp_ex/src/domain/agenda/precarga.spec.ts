@@ -6,6 +6,7 @@ import {
   construirTextoBusqueda,
   ETIQUETAS_EXPEDIENTE,
   ETIQUETAS_UBICACION,
+  normalizarFechaISO,
 } from './precarga';
 
 describe('parsearValoresPrecarga', () => {
@@ -189,5 +190,28 @@ describe('esNombreMarcador', () => {
       esNombreMarcador(delServidor.nombre, delServidor.documento) &&
       !esNombreMarcador(local.nombre, local.documento);
     expect(conservar).toBe(false);
+  });
+});
+
+describe('normalizarFechaISO', () => {
+  it('convierte DD/MM/YYYY del BackOffice a YYYY-MM-DD', () => {
+    expect(normalizarFechaISO('01/01/1980')).toBe('1980-01-01');
+    expect(normalizarFechaISO('9/3/1979')).toBe('1979-03-09');
+  });
+  it('deja intacto YYYY-MM-DD', () => {
+    expect(normalizarFechaISO('1980-01-01')).toBe('1980-01-01');
+  });
+  it('toma la parte de fecha de un datetime ISO', () => {
+    expect(normalizarFechaISO('1980-01-01T00:00:00.000Z')).toBe('1980-01-01');
+    expect(normalizarFechaISO('1980-01-01T06:30:00')).toBe('1980-01-01');
+  });
+  it('acepta día-primero con guiones', () => {
+    expect(normalizarFechaISO('01-01-1980')).toBe('1980-01-01');
+  });
+  it('devuelve null ante basura o vacío (no revienta el input)', () => {
+    expect(normalizarFechaISO('')).toBeNull();
+    expect(normalizarFechaISO(null)).toBeNull();
+    expect(normalizarFechaISO('no-es-fecha')).toBeNull();
+    expect(normalizarFechaISO('32/13/2020')).toBeNull();
   });
 });
