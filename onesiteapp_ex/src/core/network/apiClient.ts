@@ -348,7 +348,12 @@ const pistaPorEstado = (estado: number, destino: string): string | null => {
  */
 export const registrarFalloHttp = (etiqueta: string, error: unknown): void => {
   if (!axios.isAxiosError(error)) {
-    console.error(`❌ [${etiqueta}] Error ajeno a HTTP:`, error);
+    // Format string CONSTANTE con `%s`, no un template literal: esta llamada pasa un
+    // segundo argumento, así que el primero actúa como format string de `util.format` y
+    // un `%` dentro de `etiqueta` podría falsificar la línea del log (unsafe-formatstring
+    // de Semgrep). Las demás llamadas de esta función son de un solo argumento y no
+    // tienen ese problema. Mismo criterio que el resto de `console.*` del módulo.
+    console.error('❌ [%s] Error ajeno a HTTP:', etiqueta, error);
     return;
   }
 
