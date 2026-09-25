@@ -756,7 +756,20 @@ const DynamicSurvey = ({ route, encuesta, preguntas, secciones, catalogos, captu
           if (!esPrecargado || (sinNombreReal && detectadoEsUtil)) {
             record.nombre = nombreDetectado;
           }
-          record.estado_gestion = estadoGestionCliente;
+          /**
+           * Una gestión CANCELADA no se reabre por un auto-save.
+           *
+           * Hoy la agenda no lista los `estado_gestion = 2`, así que el asesor no puede
+           * volver a entrar a una tarjeta cancelada y esta asignación era inalcanzable.
+           * Pero era un `estado_gestion = 0` a una pulsación de distancia: el día que la
+           * lista muestre las canceladas —o que se navegue a la instancia por cualquier
+           * otro camino— un simple guardado automático resucitaría una cancelación ya
+           * enviada al servidor, dejando el móvil y `pre.Precarga` en desacuerdo.
+           * La cancelación es TERMINAL por decisión de producto.
+           */
+          if (record.estado_gestion !== 2) {
+            record.estado_gestion = estadoGestionCliente;
+          }
         });
         await database.batch([...registrosABorrar, ...batchCreate, clienteActualizado] as any[]);
       }

@@ -239,5 +239,43 @@ export const migrations = schemaMigrations({
         }),
       ],
     },
+    {
+      /**
+       * Cola de salida del rechazo de gestión (deuda del Sprint 14). Va en el MISMO
+       * commit que la subida de `version` a 12 en `schema.ts`: un `@field` sin columna
+       * lanza `TypeError: Cannot read property 'type' of undefined` y aborta la
+       * sincronización COMPLETA, no solo esa fila.
+       *
+       * POR QUÉ LAS DOS NUMÉRICAS NO SON OPCIONALES
+       * `addColumns` rellena las filas existentes con el valor nulo del tipo, que para
+       * `number` es 0 — y 0 significa exactamente "pendiente de enviar" / "cero
+       * intentos", que es lo que queremos. Declararlas opcionales dejaría NULL, y
+       * `Q.where('rechazo_envio_estado', Q.oneOf([0, 1]))` no encuentra NULL: las filas
+       * ya canceladas quedarían fuera de la cola para siempre, en silencio.
+       *
+       * EFECTO DELIBERADO: BACKFILL
+       * Toda gestión cancelada antes de v12 entra a la cola en estado 0 y se empuja en
+       * el siguiente sync. Son precisamente las que perdieron su motivo (nunca viajó), y
+       * recuperarlo es la mitad del valor de este cambio. Es seguro porque el envío es
+       * idempotente por `rechazo_uuid` y el drenado tiene tope por ciclo. Incluye las
+       * que el código anterior ya empujó sin motivo: el `UPDATE` del servidor escribe el
+       * comentario aunque `Estado` ya sea RECHAZADO, así que reenviarlas es lo único que
+       * recupera el dato.
+       */
+      toVersion: 12,
+      steps: [
+        addColumns({
+          table: 'local_cliente_pendiente',
+          columns: [
+            { name: 'rechazo_uuid', type: 'string', isOptional: true },
+            { name: 'rechazo_envio_estado', type: 'number', isIndexed: true },
+            { name: 'rechazo_intentos', type: 'number' },
+            { name: 'rechazo_ultimo_error', type: 'string', isOptional: true },
+            { name: 'rechazo_fecha', type: 'number', isOptional: true },
+            { name: 'rechazo_fecha_envio', type: 'number', isOptional: true },
+          ],
+        }),
+      ],
+    },
   ],
 });

@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 11, // v11: mensajes parametrizables por pregunta (mensaje_error, mensaje_notificacion)
+  version: 12, // v12: cola de salida del rechazo de gestión (columnas rechazo_*)
   tables: [
     // Tabla para control de sincronización por tabla (Regla 4.4 y 4.5)
     tableSchema({
@@ -181,7 +181,33 @@ export const schema = appSchema({
         // JSON crudo [{ id_pregunta, etiqueta, valor }] que prellena el formulario.
         { name: 'valores_json', type: 'string', isOptional: true },
         // CARGADO | APLICADO | ANULADO | RECHAZADO, tal cual lo manda BackOffice.
+        // SOLO la escribe el sync con lo que dice el servidor. NO se usa como marca de
+        // "ya lo envié": esa confusión hacía imposible distinguir "el servidor lo dice"
+        // de "yo lo mandé", y sellaba un RECHAZADO que el servidor podía no haber hecho.
         { name: 'estado_servidor', type: 'string', isOptional: true },
+        // --- v12: cola de salida del rechazo de gestión ---
+        // Estas columnas son de TRANSPORTE y su único escritor es
+        // `empujarRechazosPendientes`. Viven aquí y no en una tabla aparte porque
+        // `persistirCapturas` actualiza esta tabla campo por campo (no la destruye y
+        // recrea, como sí hace con `local_captura`), así que el estado de envío
+        // sobrevive al auto-save. No añaden un tercer escritor sobre los campos de
+        // negocio: la invariante de conjuntos disjuntos por `origen` sigue intacta.
+        //
+        // Identidad de la INTENCIÓN de rechazar, no de la fila. Es la clave de
+        // idempotencia que el servidor indexa como UNIQUE: sin ella, un 200 perdido por
+        // la red duplicaría el encabezado en el siguiente ciclo. Se persiste ANTES del
+        // POST, o un reintento generaría otro uuid y el duplicado volvería a colarse.
+        { name: 'rechazo_uuid', type: 'string', isOptional: true },
+        // 0 pendiente | 1 error reintentable | 2 enviado | 3 rechazado definitivamente.
+        // Mismo vocabulario que `local_multimedia.estado_subida`, a propósito.
+        { name: 'rechazo_envio_estado', type: 'number', isIndexed: true },
+        { name: 'rechazo_intentos', type: 'number' },
+        { name: 'rechazo_ultimo_error', type: 'string', isOptional: true },
+        // Cuándo canceló el asesor (reloj del dispositivo) y cuándo lo confirmó el
+        // servidor. Se guardan las dos: un móvil con el reloj desajustado desordenaría
+        // el histórico, misma lección que el cursor de sync y la bitácora de errores.
+        { name: 'rechazo_fecha', type: 'number', isOptional: true },
+        { name: 'rechazo_fecha_envio', type: 'number', isOptional: true },
       ],
     }),
 

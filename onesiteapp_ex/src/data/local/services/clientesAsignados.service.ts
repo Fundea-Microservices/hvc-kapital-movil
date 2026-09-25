@@ -1,4 +1,5 @@
 import axios from 'axios';
+import uuid from 'react-native-uuid';
 import { Database, Q } from '@nozbe/watermelondb';
 import { apiClient, apiClientAgenda, agendaConfigurada } from '../../../core/network/apiClient';
 import LocalClientePendiente from '../models/LocalClientePendiente';
@@ -10,6 +11,18 @@ import { registrarError } from './bitacora.service';
 import { leerRaw, type RawPregunta } from '../types/raw.types';
 import { esFilaServidor, numeroDe, textoDe, type FilaServidor } from '../../remote/types/sync.types';
 import { esNombreMarcador } from '../../../domain/agenda/precarga';
+import {
+  debeEnviarseRechazo,
+  normalizarOrigen,
+  esPayloadCoherente,
+  clasificarFallo,
+  recortarMotivo,
+  ENVIO_PENDIENTE,
+  ENVIO_ERROR_REINTENTABLE,
+  ENVIO_ENVIADO,
+  ENVIO_DEFINITIVO,
+  MAX_INTENTOS_RECHAZO,
+} from '../../../domain/agenda/rechazo';
 import {
   aClienteAsignado,
   estaRevocado,
@@ -481,43 +494,190 @@ export const sincronizarClientesAsignados = async (
  * y con ello también el conjunto donde se buscan bajas por ausencia.
  */
 /**
- * Empuja al servidor los RECHAZOS que el asesor hizo offline.
+ * Empuja al servidor los RECHAZOS de gestión que el asesor hizo offline.
  *
- * "Cancelar Gestión" marca la fila local (estado_gestion=2 + motivo) sin red. Esta
- * fase, en el sync, lleva ese rechazo a pre.Precarga vía el backend propio
- * (POST /surveys/precarga-estado), que hace UPDATE ... Estado='RECHAZADO'
- * WHERE Estado='CARGADO'. Es la contraparte de FINALIZADO, que viaja en /submit.
+ * "Cancelar Gestión" marca la fila local (`estado_gestion = 2` + `motivo_rechazo`) sin
+ * red: eso NO cambia y es la razón de ser de esta cola. Esta fase, ya dentro del sync,
+ * entrega el encabezado del rechazo —incluido el MOTIVO, que antes nunca salía del
+ * dispositivo— a `POST /surveys/encuestas-rechazadas`, que inserta en
+ * `appEx_Encuestas_Rechazadas` y, cuando la gestión venía de la cartera, espeja el
+ * comentario en `pre.Precarga` y la pasa a `RECHAZADO`.
  *
- * Pendientes = filas PRECARGA canceladas cuyo estado_servidor aún no es RECHAZADO.
- * Tras un 200 se sella estado_servidor='RECHAZADO' para no re-empujar. NUNCA lanza:
- * un fallo aquí no puede tumbar el ciclo; se reintenta al siguiente sync.
+ * LOS DOS ORÍGENES VIAJAN
+ * Ya no se filtra por `origen`. La AD-HOC no tiene fila en `pre.Precarga` —se creó en
+ * campo— y antes se quedaba sin destino: ahora el encabezado propio le da uno. La
+ * invariante de escritores disjuntos sigue intacta porque esta función solo escribe las
+ * columnas `rechazo_*`, que son de transporte y no tienen otro escritor.
+ *
+ * POR QUÉ UNA MARCA PROPIA Y NO `estado_servidor`
+ * La versión anterior sellaba `estado_servidor = 'RECHAZADO'` tras un 200. Dos problemas:
+ * esa columna es lo que dice el SERVIDOR (invariante de la tabla), y se sellaba incluso
+ * cuando la respuesta traía `afectadasPrecarga: 0` porque la fila ya estaba
+ * FINALIZADO/ANULADO — registrando como rechazado algo que el servidor no rechazó.
+ *
+ * NUNCA LANZA: un fallo aquí no puede tumbar el ciclo ni arrastrar el envío de capturas,
+ * que es lo único irrecuperable. Lo que no se pudo enviar se reintenta al siguiente sync,
+ * con tope de intentos para que un payload inválido no gire para siempre.
  */
 export const empujarRechazosPendientes = async (databaseInstance: Database): Promise<void> => {
   try {
     const coleccion = databaseInstance.collections.get<LocalClientePendiente>(TABLA_AGENDA);
-    const canceladas = await coleccion.query(Q.where('estado_gestion', 2)).fetch();
-    const pendientes = canceladas.filter(
-      (r) => r.origen === 'PRECARGA' && (r.estado_servidor || '').toUpperCase() !== 'RECHAZADO',
+
+    // El filtro fino (motivo presente, estado de envío) lo decide `debeEnviarseRechazo`,
+    // que es puro y está probado. La consulta solo acota lo que se trae a memoria.
+    const canceladas = await coleccion
+      .query(Q.where('estado_gestion', 2), Q.where('rechazo_envio_estado', Q.oneOf([
+        ENVIO_PENDIENTE,
+        ENVIO_ERROR_REINTENTABLE,
+      ])))
+      .fetch();
+
+    const pendientes = canceladas.filter((r) => debeEnviarseRechazo(r));
+    if (pendientes.length === 0) return;
+
+    /**
+     * Tope por ciclo. Al subir a v12 toda gestión cancelada ANTES de esta versión entra
+     * a la cola (es justo la que perdió su motivo), así que un equipo con meses de
+     * historial haría cientos de POST secuenciales en el primer sync en campo. El resto
+     * sale en los ciclos siguientes.
+     */
+    const tope = await obtenerParametroNumerico('AGENDA_RECHAZOS_LOTE', 50);
+    const lote = pendientes.slice(0, Math.max(1, tope));
+
+    console.log(
+      `📤 [RECHAZOS] ${lote.length} de ${pendientes.length} pendiente(s) en esta corrida.`,
     );
 
-    for (const fila of pendientes) {
+    for (const fila of lote) {
+      const origen = normalizarOrigen(fila.origen);
+      // Para una gestión de cartera, el `id_cliente` local ES el `Id` de pre.Precarga:
+      // la agenda navega con `uuidInstanciaBase = id_cliente`. La ad-hoc manda null.
+      const idPrecarga = origen === 'PRECARGA' ? fila.id_cliente : null;
+
+      // Un payload incoherente recibiría un 400 seguro. Se descarta sin gastar el viaje
+      // de red ni una entrada de bitácora por cada ciclo.
+      if (!esPayloadCoherente(origen, idPrecarga)) {
+        await sellarFalloRechazo(
+          databaseInstance,
+          fila,
+          ENVIO_DEFINITIVO,
+          fila.rechazo_intentos,
+          `Payload incoherente: origen=${origen} idPrecarga=${idPrecarga ?? 'null'}`,
+        );
+        continue;
+      }
+
       try {
-        await apiClient.post('/surveys/precarga-estado', {
-          idPrecarga: fila.id_cliente,
-          estado: 'RECHAZADO',
+        // El uuid se persiste ANTES del POST. Generarlo al vuelo en cada intento daría
+        // uno distinto por reintento y el UNIQUE del servidor no podría reconocer el
+        // duplicado: un 200 perdido por la red acabaría en dos encabezados.
+        const idRechazo = await asegurarUuidRechazo(databaseInstance, fila);
+
+        await apiClient.post('/surveys/encuestas-rechazadas', {
+          idRechazo,
+          origen,
+          idPrecarga,
+          idEncuesta: fila.id_encuesta,
+          uuidInstancia: fila.id_cliente,
+          // A QUIÉN se rechazó. En una PRECARGA vienen todos; en una AD-HOC solo el
+          // nombre deducido de las respuestas, que puede ser un marcador.
+          cliente: {
+            nombre: fila.nombre || null,
+            documento: fila.documento,
+            cuenta: fila.cuenta,
+            operacion: fila.operacion,
+            expediente: fila.expediente,
+          },
+          motivo: recortarMotivo(fila.motivo_rechazo),
+          // Reloj del dispositivo; el servidor lo valida por rango y, si está fuera,
+          // usa su propia hora. `rechazo_fecha` puede faltar en las filas del backfill.
+          fechaRechazo: new Date(fila.rechazo_fecha ?? Date.now()).toISOString(),
+          // `idEmpresa` y `dispositivoId` NO se envían: el backend los resuelve del
+          // device token autenticado. El equipo solo guarda `company_name` (el nombre),
+          // y un cliente no debe poder atribuir un rechazo a otra empresa.
         });
+
         await databaseInstance.write(async () => {
           await fila.update((r) => {
-            r.estado_servidor = 'RECHAZADO';
+            r.rechazo_envio_estado = ENVIO_ENVIADO;
+            r.rechazo_fecha_envio = Date.now();
+            r.rechazo_ultimo_error = null;
+            // `estado_servidor` NO se toca: sigue reflejando solo lo que dice el
+            // servidor, y la próxima descarga lo traerá si cambió.
           });
         });
       } catch (e) {
-        // Se reintenta en el próximo ciclo; no aborta el resto de la cola.
-        await registrarError('clientesAsignados.rechazo', e, { idPrecarga: fila.id_cliente });
+        const status = axios.isAxiosError(e) ? (e.response?.status ?? null) : null;
+        const { estado, intentos } = clasificarFallo(status, fila.rechazo_intentos);
+        const detalle = e instanceof Error ? e.message : String(e);
+
+        await sellarFalloRechazo(databaseInstance, fila, estado, intentos, detalle);
+
+        // Solo se anota en la bitácora el fallo DEFINITIVO. Un error de red se repite en
+        // cada ciclo mientras el asesor esté sin cobertura y llenaría las 500 filas de
+        // tope, desalojando diagnósticos que sí importan.
+        if (estado === ENVIO_DEFINITIVO) {
+          await registrarError('clientesAsignados.rechazo', e, {
+            origen,
+            idPrecarga,
+            status,
+            intentos,
+          });
+        } else {
+          console.warn(`⚠️ [RECHAZOS] Reintentable (${intentos}/${MAX_INTENTOS_RECHAZO}): ${detalle}`);
+        }
       }
     }
   } catch (e) {
     console.warn('[AGENDA] No se pudieron empujar los rechazos pendientes:', e);
+  }
+};
+
+/**
+ * Persiste el uuid del rechazo si la fila aún no lo tiene y lo devuelve.
+ *
+ * Las filas del backfill (canceladas antes de v12) llegan sin uuid, y también lo hace
+ * cualquier cancelación escrita por una versión anterior de la app.
+ */
+const asegurarUuidRechazo = async (
+  databaseInstance: Database,
+  fila: LocalClientePendiente,
+): Promise<string> => {
+  const existente = (fila.rechazo_uuid || '').trim();
+  if (existente) return existente;
+
+  const nuevo = uuid.v4().toString();
+  await databaseInstance.write(async () => {
+    await fila.update((r) => {
+      r.rechazo_uuid = nuevo;
+      // Se aprovecha para datar las del backfill: sin esto el servidor recibiría la
+      // fecha del primer sync como si fuese la del rechazo.
+      if (!r.rechazo_fecha) r.rechazo_fecha = Date.now();
+    });
+  });
+  return nuevo;
+};
+
+/** Anota el resultado de un intento fallido. Aislado para no repetir el `write`. */
+const sellarFalloRechazo = async (
+  databaseInstance: Database,
+  fila: LocalClientePendiente,
+  estado: number,
+  intentos: number,
+  detalle: string,
+): Promise<void> => {
+  try {
+    await databaseInstance.write(async () => {
+      await fila.update((r) => {
+        r.rechazo_envio_estado = estado;
+        r.rechazo_intentos = intentos;
+        // Acotado: `local_bitacora_error` ya guarda el detalle completo del definitivo,
+        // y aquí solo hace falta lo suficiente para diagnosticar desde la agenda.
+        r.rechazo_ultimo_error = detalle.slice(0, 300);
+      });
+    });
+  } catch (e) {
+    console.warn('[RECHAZOS] No se pudo anotar el fallo de envío:', e);
   }
 };
 

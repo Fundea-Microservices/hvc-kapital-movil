@@ -10,6 +10,7 @@ import LocalEncuesta from '../../../data/local/models/LocalEncuesta';
 import { useNavigation } from '@react-navigation/native';
 import type { NavegacionApp, RutaDe } from '../../navigation/types';
 import { filtrarClientes, contarPendientes, soloPendientes } from '../../../domain/agenda/busqueda';
+import { recortarMotivo, MAX_LONGITUD_MOTIVO, ENVIO_PENDIENTE } from '../../../domain/agenda/rechazo';
 import { useValorPospuesto } from '../../hooks/useValorPospuesto';
 import { useCargarClientesAsignados } from '../../hooks/useCargarClientesAsignados';
 import { agendaConfigurada } from '../../../core/network/apiClient';
@@ -104,7 +105,21 @@ const SurveyClients = ({ clientes, encuesta, route }: Props) => {
         await database.write(async () => {
           await selectedCliente.update((record) => {
             record.estado_gestion = 2;
-            record.motivo_rechazo = motivoCancelacion;
+            record.motivo_rechazo = recortarMotivo(motivoCancelacion);
+            /**
+             * La cancelación sigue siendo LOCAL E INMEDIATA: aquí solo se encola.
+             * El envío lo hace `empujarRechazosPendientes` en el próximo sync, así que
+             * el asesor no espera red ni se le puede negar la cancelación por no tenerla.
+             *
+             * El uuid se genera AHORA y no al enviar: es la clave de idempotencia del
+             * servidor y debe ser la misma en todos los reintentos.
+             */
+            record.rechazo_uuid = uuid.v4().toString();
+            record.rechazo_envio_estado = ENVIO_PENDIENTE;
+            record.rechazo_intentos = 0;
+            record.rechazo_ultimo_error = null;
+            record.rechazo_fecha = Date.now();
+            record.rechazo_fecha_envio = null;
           });
         });
       }
@@ -233,6 +248,11 @@ const SurveyClients = ({ clientes, encuesta, route }: Props) => {
               placeholder="Ej. Cliente se mudó de localidad..."
               value={motivoCancelacion}
               onChangeText={setMotivoCancelacion}
+              /* Tope en la entrada, no solo al guardar: el motivo se persiste en
+                 columnas NVARCHAR acotadas del servidor, y pasarse provoca un fallo de
+                 truncamiento dentro de la transacción. Cortar en silencio lo que el
+                 asesor ya escribió es peor que no dejarle escribir más. */
+              maxLength={MAX_LONGITUD_MOTIVO}
               className="w-full border border-gray-200 rounded-2xl p-4 mt-4 text-gray-700 bg-gray-50 text-sm align-top"
               style={{ textAlignVertical: 'top' }}
             />

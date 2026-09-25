@@ -43,6 +43,27 @@ export default class LocalClientePendiente extends Model {
   /**
    * Estado según BackOffice (CARGADO/APLICADO/ANULADO/RECHAZADO). Vive aparte de
    * `estado_gestion` a propósito: ese es del asesor y el sync no lo pisa.
+   *
+   * SOLO lo escribe el sync con lo que responde el servidor. NO es la marca de "ya
+   * envié el rechazo" — para eso están las columnas `rechazo_*`.
    */
   @field('estado_servidor') estado_servidor!: string | null;
+
+  // --- v12: cola de salida del rechazo de gestión ---------------------------
+  // Columnas de TRANSPORTE, con un único escritor: `empujarRechazosPendientes`.
+
+  /** uuid de la INTENCIÓN de rechazar. Clave de idempotencia del servidor. */
+  @field('rechazo_uuid') rechazo_uuid!: string | null;
+
+  /** 0 pendiente | 1 error reintentable | 2 enviado | 3 rechazado definitivamente. */
+  @field('rechazo_envio_estado') rechazo_envio_estado!: number;
+
+  @field('rechazo_intentos') rechazo_intentos!: number;
+  @field('rechazo_ultimo_error') rechazo_ultimo_error!: string | null;
+
+  /** Cuándo canceló el asesor, según el reloj del dispositivo (ms). */
+  @field('rechazo_fecha') rechazo_fecha!: number | null;
+
+  /** Cuándo lo confirmó el servidor (ms). */
+  @field('rechazo_fecha_envio') rechazo_fecha_envio!: number | null;
 }
