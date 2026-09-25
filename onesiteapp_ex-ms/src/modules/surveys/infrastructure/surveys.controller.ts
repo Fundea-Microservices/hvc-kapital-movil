@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { SurveysService } from '../application/surveys.service';
 import { CatalogosExternosService } from '../application/catalogos-externos.service';
+import { EncuestaRechazadaSchema } from '../domain/dtos/encuesta-rechazada.dto';
 
 @Controller('api/v1/surveys')
 export class SurveysController {
@@ -83,9 +84,54 @@ export class SurveysController {
   }
 
   /**
-   * Cambia el estado de una precarga (hoy solo RECHAZADO, desde "Cancelar Gestión").
-   * El servicio valida la whitelist; aquí solo se exige dispositivo autenticado e
-   * IdUsuario, igual que /submit.
+   * Registra el rechazo de una gestión ("Cancelar Gestión"), de los DOS orígenes.
+   *
+   * El motivo lo escribe la app en el dispositivo al instante y sin red; esta ruta es la
+   * que lo entrega cuando vuelve la cobertura, drenando la cola de salida del sync.
+   *
+   * El body se valida con Zod y no con los tipos de TypeScript: el DTO es la barrera
+   * REAL, y valida aunque un cliente manipulado llame directo al endpoint. `idEmpresa` y
+   * `dispositivoId` NO se aceptan del body — los resuelve el servicio desde el device
+   * token, igual que el `userId` sale de la cabecera y nunca del payload.
+   */
+  @Post('encuestas-rechazadas')
+  async registrarEncuestaRechazada(
+    @Body() body: unknown,
+    @Headers('x-device-token') deviceToken: string,
+    @Headers('x-user-id') headerUserId: string,
+  ) {
+    if (!deviceToken)
+      throw new UnauthorizedException('Dispositivo no autenticado');
+
+    const userId = Number(headerUserId);
+    if (!headerUserId || isNaN(userId)) {
+      throw new BadRequestException(
+        'Falta el IdUsuario en la cabecera o es inválido',
+      );
+    }
+
+    const validacion = EncuestaRechazadaSchema.safeParse(body);
+    if (!validacion.success) {
+      // Se devuelve el detalle por campo: la app marca el envío como DEFINITIVO ante un
+      // 400 y deja de reintentarlo, así que este mensaje es la única pista que quedará.
+      const detalle = validacion.error.issues
+        .map((i) => `${i.path.join('.') || 'body'}: ${i.message}`)
+        .join('; ');
+      throw new BadRequestException(`Rechazo inválido — ${detalle}`);
+    }
+
+    return await this.surveysService.registrarEncuestaRechazada(
+      userId,
+      deviceToken,
+      validacion.data,
+    );
+  }
+
+  /**
+   * @deprecated Cambia el estado de una precarga sin el motivo. La reemplaza
+   * `POST encuestas-rechazadas`, que además cubre las gestiones AD-HOC. Se conserva por
+   * los APKs que puedan seguir llamándola: retirarla dejaría a esos equipos acumulando
+   * rechazos en su cola local sin forma de entregarlos.
    */
   @Post('precarga-estado')
   async precargaEstado(

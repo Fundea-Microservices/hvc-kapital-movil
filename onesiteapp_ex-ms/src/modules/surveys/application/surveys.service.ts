@@ -1,12 +1,18 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import {
   aFechaLocalSqlServer,
   ahoraLocalSqlServer,
   esZonaHorariaValida,
+  esFechaDispositivoRazonable,
   ZONA_HORARIA_POR_DEFECTO,
 } from '../domain/fechas';
+import { type EncuestaRechazadaDto } from '../domain/dtos/encuesta-rechazada.dto';
 
 /**
  * Lee una bandera booleana de una fila SQL admitiendo varios alias de columna,
@@ -425,7 +431,224 @@ export class SurveysService {
    * La guarda WHERE Estado = 'CARGADO' impide pisar un FINALIZADO/ANULADO puesto
    * entretanto: solo una precarga aún pendiente puede rechazarse.
    */
-  async actualizarEstadoPrecarga(userId: number, idPrecarga: string, estado?: string) {
+  /**
+   * Registra el rechazo de una gestión ("Cancelar Gestión") que el asesor hizo offline.
+   *
+   * Los DOS orígenes aterrizan en `appEx_Encuestas_Rechazadas`: la gestión precargada y
+   * la creada en campo. La AD-HOC no existe en `pre.Precarga` —no salió de un Excel del
+   * BackOffice— y antes se quedaba sin destino, así que su motivo moría en el
+   * dispositivo. Cuando sí hay `idPrecarga`, el motivo se ESPEJA en esa tabla para que el
+   * BackOffice lo vea donde ya mira, y su `Estado` pasa a `RECHAZADO`.
+   *
+   * IDEMPOTENCIA REAL, NO POR EFECTO COLATERAL
+   * `idRechazo` lo genera el móvil al cancelar y es el mismo en todos los reintentos; la
+   * tabla lo indexa como UNIQUE. Un 200 perdido por la red hace que el dispositivo
+   * reintente, y ese reintento devuelve `DUPLICADO` en vez de insertar otro encabezado.
+   * La versión anterior descansaba en que `WHERE Estado='CARGADO'` no encontrara fila la
+   * segunda vez, que es un efecto colateral y no una garantía.
+   *
+   * POR QUÉ EL `Estado` VA EN UN `CASE` Y EL COMENTARIO NO
+   * La guarda original (`WHERE Estado = 'CARGADO'`) protege un `ANULADO`/`FINALIZADO`
+   * puesto entretanto por el BackOffice, y se conserva. Pero si esa guarda estuviera en
+   * el `WHERE`, una fila que ya esté en `RECHAZADO` —todas las que empujó la versión
+   * anterior, que mandaba el estado SIN el motivo— nunca recibiría su comentario, que es
+   * justo el dato que se viene a salvar. Así que el estado se protege y el comentario
+   * siempre se escribe.
+   */
+  async registrarEncuestaRechazada(
+    userId: number,
+    deviceToken: string,
+    dto: EncuestaRechazadaDto,
+  ) {
+    const zona = this.zonaHoraria();
+
+    /**
+     * `IdEmpresa` y `DispositivoID` se resuelven AQUÍ, del dispositivo autenticado, y no
+     * se aceptan del body: el equipo solo guarda `company_name` (el nombre de la empresa,
+     * nunca el id), y un cliente manipulado no debe poder atribuir un rechazo a otra
+     * empresa ni a otro equipo. Mismo criterio que el `userId`, que sale de la cabecera
+     * verificada. Un `SELECT` cubre las dos columnas.
+     */
+    // `query<T>` en vez de un `as`: el genérico tipa el resultado de verdad, mientras un
+    // cast sobre el `any` que devuelve el driver solo silencia al compilador.
+    const dispositivo = await this.dataSource.query<
+      Array<{ IdEmpresa: number | null; HardwareID: string | null }>
+    >(
+      `SELECT IdEmpresa, HardwareID FROM Dispositivos_AppEx WHERE DeviceToken = @0`,
+      [deviceToken],
+    );
+
+    // Un dispositivo desconocido es 401, no 500: el device token ya no es válido.
+    if (!dispositivo || dispositivo.length === 0) {
+      throw new UnauthorizedException('Dispositivo no reconocido');
+    }
+
+    const idEmpresa = dispositivo[0].IdEmpresa ?? null;
+    const dispositivoId = dispositivo[0].HardwareID ?? null;
+
+    // Fecha del móvil solo si es creíble; si no, la del servidor. Una fecha de 1970 o de
+    // 2090 desordenaría el histórico entero al consultarlo por rango.
+    const fechaRechazoDisp = esFechaDispositivoRazonable(dto.fechaRechazo)
+      ? aFechaLocalSqlServer(dto.fechaRechazo, zona)
+      : ahoraLocalSqlServer(zona);
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // El duplicado se detecta ANTES de insertar para poder responder 200 DUPLICADO en
+      // vez de un 500 por violación de UNIQUE. El índice sigue siendo la garantía dura
+      // (dos peticiones simultáneas), y el `catch` de abajo la traduce igual.
+      const yaExiste = await queryRunner.manager.query<
+        Array<{ IdEncuestaRechazada: string; AfectadasPrecarga: number }>
+      >(
+        `SELECT IdEncuestaRechazada, AfectadasPrecarga
+           FROM appEx_Encuestas_Rechazadas WHERE IdRechazo = @0`,
+        [dto.idRechazo],
+      );
+
+      if (yaExiste && yaExiste.length > 0) {
+        await queryRunner.commitTransaction();
+        console.log(
+          `[RECHAZO] ${dto.idRechazo} ya estaba registrado: se responde DUPLICADO sin insertar.`,
+        );
+        return {
+          success: true,
+          idRechazo: dto.idRechazo,
+          resultado: 'DUPLICADO' as const,
+          afectadasPrecarga: Number(yaExiste[0].AfectadasPrecarga ?? 0),
+        };
+      }
+
+      let afectadasPrecarga = 0;
+
+      // El espejo va PRIMERO: si `pre.Precarga` tiene un CHECK o un trigger que lo
+      // rechace, el fallo aparece antes de insertar el encabezado y el rollback deja
+      // todo como estaba, en vez de dejar un encabezado que dice haber espejado algo.
+      if (dto.origen === 'PRECARGA' && dto.idPrecarga) {
+        const filas = await queryRunner.manager.query<
+          Array<{ Afectadas: number }>
+        >(
+          `
+          UPDATE pre.Precarga
+             SET Estado = CASE WHEN Estado = 'CARGADO' THEN 'RECHAZADO' ELSE Estado END,
+                 Comentario = @1,
+                 IdUsractualiza = @2,
+                 Updated_At = GETDATE()
+           WHERE Id = @0;
+          SELECT @@ROWCOUNT AS Afectadas;
+        `,
+          [dto.idPrecarga, dto.motivo, userId],
+        );
+
+        afectadasPrecarga = Number(filas?.[0]?.Afectadas ?? 0);
+
+        if (afectadasPrecarga === 0) {
+          // No es un error: la precarga puede haber sido revocada o finalizada. Se
+          // registra el hecho y el encabezado queda igual, que es el dato que importa.
+          console.warn(
+            `[RECHAZO] La precarga ${dto.idPrecarga} no existe o no se pudo actualizar; ` +
+              'el encabezado del rechazo se guarda de todas formas.',
+          );
+        }
+      }
+
+      const insertado = await queryRunner.manager.query<
+        Array<{ IdEncuestaRechazada: number | string }>
+      >(
+        `
+        INSERT INTO appEx_Encuestas_Rechazadas
+          (IdRechazo, Origen, IdPrecarga, IdEmpresa, DispositivoID, IdEncuesta,
+           IdUsuario, UuidInstancia, NombreCliente, Documento, Cuenta, Operacion,
+           Expediente, Motivo, FechaRechazoDisp, AfectadasPrecarga)
+        OUTPUT inserted.IdEncuestaRechazada
+        VALUES (@0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, @12, @13, @14, @15)
+      `,
+        [
+          dto.idRechazo,
+          dto.origen,
+          // Cadena vacía a null: rompería la conversión a UNIQUEIDENTIFIER, y null es
+          // exactamente lo que corresponde a una gestión creada en campo.
+          dto.idPrecarga || null,
+          idEmpresa,
+          dispositivoId,
+          dto.idEncuesta,
+          userId,
+          dto.uuidInstancia || null,
+          dto.cliente?.nombre || null,
+          dto.cliente?.documento || null,
+          dto.cliente?.cuenta || null,
+          dto.cliente?.operacion || null,
+          dto.cliente?.expediente || null,
+          dto.motivo,
+          fechaRechazoDisp,
+          afectadasPrecarga,
+        ],
+      );
+
+      if (!insertado || insertado.length === 0) {
+        throw new Error(
+          'La inserción del rechazo falló: SQL Server no devolvió la fila creada.',
+        );
+      }
+
+      await queryRunner.commitTransaction();
+
+      // `respuestas` se acepta en el DTO pero todavía no se persiste: queda
+      // `RespuestasEnviadas = 0` para un backfill selectivo cuando se implemente.
+      return {
+        success: true,
+        idRechazo: dto.idRechazo,
+        resultado: 'REGISTRADO' as const,
+        afectadasPrecarga,
+      };
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+
+      // Violación de UNIQUE: dos peticiones simultáneas con el mismo idRechazo. Es
+      // exactamente lo que el índice debe evitar, y para el cliente es un éxito: el
+      // rechazo está registrado. Devolverle un 500 lo haría reintentar sin fin.
+      const mensaje = error instanceof Error ? error.message : String(error);
+      const numero = (error as { number?: number })?.number;
+      if (
+        numero === 2601 ||
+        numero === 2627 ||
+        /UX_EncRech_IdRechazo/i.test(mensaje)
+      ) {
+        console.log(
+          `[RECHAZO] Carrera sobre ${dto.idRechazo}: se responde DUPLICADO.`,
+        );
+        return {
+          success: true,
+          idRechazo: dto.idRechazo,
+          resultado: 'DUPLICADO' as const,
+          afectadasPrecarga: 0,
+        };
+      }
+
+      console.error(
+        `[RECHAZO] Falló el registro de ${dto.idRechazo}: ${mensaje}`,
+      );
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * @deprecated Contrato del primer intento, que mandaba el estado SIN el motivo — el
+   * dato que se venía a salvar. Lo reemplaza `registrarEncuestaRechazada`, que además
+   * cubre las gestiones AD-HOC. Se conserva porque puede haber APKs instalados que
+   * sigan llamando a `POST /surveys/precarga-estado`: retirarlo dejaría a esos equipos
+   * acumulando rechazos en su cola local sin forma de entregarlos. Retirar cuando se
+   * confirme que no queda ninguno en campo.
+   */
+  async actualizarEstadoPrecarga(
+    userId: number,
+    idPrecarga: string,
+    estado?: string,
+  ) {
     const permitido = 'RECHAZADO';
     if ((estado || '').trim().toUpperCase() !== permitido) {
       throw new BadRequestException(
@@ -433,7 +656,7 @@ export class SurveysService {
       );
     }
 
-    const filas = (await this.dataSource.query(
+    const filas = await this.dataSource.query(
       `
       UPDATE pre.Precarga
          SET Estado = 'RECHAZADO', IdUsractualiza = @1, Updated_At = GETDATE()
@@ -441,7 +664,7 @@ export class SurveysService {
       SELECT @@ROWCOUNT AS Afectadas;
     `,
       [idPrecarga, userId],
-    )) as Array<{ Afectadas: number }>;
+    );
 
     const afectadas = Number(filas?.[0]?.Afectadas ?? 0);
     if (afectadas === 0) {

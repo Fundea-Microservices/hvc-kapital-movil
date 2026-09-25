@@ -2,6 +2,7 @@ import {
   aFechaLocalSqlServer,
   ahoraLocalSqlServer,
   esZonaHorariaValida,
+  esFechaDispositivoRazonable,
 } from './fechas';
 
 /**
@@ -99,5 +100,39 @@ describe('esZonaHorariaValida', () => {
     expect(esZonaHorariaValida('America/Guatemala')).toBe(true);
     expect(esZonaHorariaValida('UTC')).toBe(true);
     expect(esZonaHorariaValida('Zona/Inventada')).toBe(false);
+  });
+});
+
+describe('esFechaDispositivoRazonable', () => {
+  const ahora = new Date('2026-09-25T10:00:00.000Z').getTime();
+
+  it('acepta una fecha reciente del dispositivo', () => {
+    expect(esFechaDispositivoRazonable('2026-09-24T18:30:00.000Z', ahora)).toBe(
+      true,
+    );
+  });
+
+  it('descarta el reloj en 1970 y el del año 2090', () => {
+    expect(esFechaDispositivoRazonable('1970-01-01T00:00:00.000Z', ahora)).toBe(
+      false,
+    );
+    expect(esFechaDispositivoRazonable('2090-01-01T00:00:00.000Z', ahora)).toBe(
+      false,
+    );
+  });
+
+  it('tolera hasta un día en el futuro (husos y desajustes leves)', () => {
+    expect(esFechaDispositivoRazonable('2026-09-25T22:00:00.000Z', ahora)).toBe(
+      true,
+    );
+    expect(esFechaDispositivoRazonable('2026-09-27T10:00:00.000Z', ahora)).toBe(
+      false,
+    );
+  });
+
+  it('descarta lo vacío y lo no parseable en vez de inventar una fecha', () => {
+    expect(esFechaDispositivoRazonable(null, ahora)).toBe(false);
+    expect(esFechaDispositivoRazonable('', ahora)).toBe(false);
+    expect(esFechaDispositivoRazonable('ayer por la tarde', ahora)).toBe(false);
   });
 });

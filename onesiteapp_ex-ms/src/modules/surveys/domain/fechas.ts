@@ -91,6 +91,35 @@ export function ahoraLocalSqlServer(
   return aFechaLocalSqlServer(new Date().toISOString(), zonaHoraria) as string;
 }
 
+/**
+ * Descarta una fecha de dispositivo que caiga fuera de un rango razonable.
+ *
+ * Un móvil con el reloj desajustado puede mandar una fecha de 1970 o del año 2090, y
+ * una sola de esas desordena un histórico entero al consultarlo por fechas. Se devuelve
+ * `null` para que el llamador use la hora del servidor: una fecha aproximada es
+ * preferible a una que miente. Es la misma lección del cursor de sincronización y de la
+ * bitácora de errores, que aplica esta política desde su propio dominio.
+ *
+ * Se mantiene aquí, y no se importa la de `diagnostics`, para no acoplar dos módulos por
+ * su capa de dominio: son reglas iguales hoy que no tienen por qué evolucionar juntas.
+ */
+export function esFechaDispositivoRazonable(
+  iso: string | null | undefined,
+  ahoraMs: number = Date.now(),
+): boolean {
+  if (!iso) return false;
+
+  const fecha = new Date(iso);
+  if (Number.isNaN(fecha.getTime())) return false;
+
+  const unAnio = 365 * 24 * 60 * 60 * 1000;
+  const unDia = 24 * 60 * 60 * 1000;
+  const ms = fecha.getTime();
+
+  // Ni más de un año en el pasado, ni más de un día en el futuro.
+  return ms >= ahoraMs - unAnio && ms <= ahoraMs + unDia;
+}
+
 /** `true` si la zona es válida para `Intl`; permite avisar al arrancar en vez de fallar en silencio. */
 export function esZonaHorariaValida(zonaHoraria: string): boolean {
   try {
