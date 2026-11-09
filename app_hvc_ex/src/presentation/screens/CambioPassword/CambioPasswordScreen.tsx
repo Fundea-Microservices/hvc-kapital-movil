@@ -1,0 +1,297 @@
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  Modal,
+  ActivityIndicator,
+  Keyboard,
+  TouchableWithoutFeedback,
+} from 'react-native';
+import { ArrowLeft, Check, CheckCircle2, Circle, Eye, EyeOff, Lock, LockKeyhole, X } from 'lucide-react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+
+import { useAuthStore } from '../../store/useAuthStore';
+import { useCambiarPasswordMutation } from '../../hooks/useCambiarPasswordMutation';
+import { useLogout } from '../../hooks/useLogout';
+import axios from 'axios';
+import { evaluarPolitica, type ResultadoPolitica } from '../../../domain/validacion/politicaPassword';
+import type { RootStackParamList } from '../../navigation/types';
+import { COLORES } from '../../theme/colores';
+
+type ModalState = 'none' | 'syncing' | 'success' | 'error';
+
+/**
+ * Mensaje de error CONTROLADO por nosotros (no se surfacea el `message` crudo del
+ * backend). Distintos backends devuelven textos inconsistentes —el servidor de FUNDEA,
+ * p. ej., responde "NO SE LOGRO REALIZAR EL CAMBIO DE CONTRSEÑA..."— así que solo se
+ * distinguen por código HTTP los dos casos con significado para el usuario; cualquier
+ * otro fallo (500/404/red/desconocido) muestra el mensaje genérico.
+ */
+const GENERICO = 'No se pudo actualizar la contraseña';
+const mensajeErrorCambio = (error: unknown): string => {
+  const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+  if (status === 401) return 'La contraseña actual no es correcta';
+  if (status === 409) return 'La nueva contraseña no puede ser igual a la actual';
+  return GENERICO;
+};
+
+/**
+ * Props opcionales del navigator. Se declaran `Partial` a propósito: la pantalla se
+ * usa en DOS modos y el spec la renderiza sin navegador. Sin `route` (modo por
+ * defecto) es el cambio OBLIGATORIO de primer ingreso; con `route.params.voluntario`
+ * es el cambio VOLUNTARIO desde el menú Perfil (con botón atrás y sin tocar la bandera
+ * de primer ingreso).
+ */
+type Props = Partial<NativeStackScreenProps<RootStackParamList, 'CambioPassword'>>;
+
+/** Una fila del checklist de reglas: ✓ azul si se cumple, ○ gris si no. */
+const ReglaItem = ({ cumple, texto }: { cumple: boolean; texto: string }) => (
+  <View className="flex-row items-center mb-1.5">
+    {cumple
+      ? <CheckCircle2 size={16} color={COLORES.navy} />
+      : <Circle size={16} color={COLORES.gray} />}
+    <Text className={`ml-2 text-sm ${cumple ? 'text-brand-navy font-inter-semibold' : 'text-brand-mist font-sans'}`}>
+      {texto}
+    </Text>
+  </View>
+);
+
+/** Input de contraseña con botón de ojo para mostrar/ocultar. */
+const CampoPassword = ({
+  etiqueta,
+  valor,
+  onChangeText,
+  visible,
+  onToggle,
+  placeholder,
+}: {
+  etiqueta: string;
+  valor: string;
+  onChangeText: (t: string) => void;
+  visible: boolean;
+  onToggle: () => void;
+  placeholder: string;
+}) => (
+  <View className="mb-5">
+    <Text className="text-brand-blue mb-2 font-inter-medium ml-1">{etiqueta}</Text>
+    <View className="flex-row items-center border rounded-input px-4 bg-white" style={{ borderColor: COLORES.gray }}>
+      <LockKeyhole size={20} color={COLORES.gray} />
+      <TextInput
+        className="flex-1 py-4 px-3 text-brand-navy text-base font-sans"
+        placeholder={placeholder}
+        placeholderTextColor={COLORES.mist}
+        value={valor}
+        onChangeText={onChangeText}
+        autoCapitalize="none"
+        secureTextEntry={!visible}
+      />
+      <TouchableOpacity onPress={onToggle} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+        {visible
+          ? <EyeOff size={20} color={COLORES.steel} />
+          : <Eye size={20} color={COLORES.steel} />}
+      </TouchableOpacity>
+    </View>
+  </View>
+);
+
+export const CambioPasswordScreen = ({ navigation, route }: Props = {}) => {
+  // Modo voluntario: viene por params solo cuando se abre desde el menú Perfil.
+  const voluntario = route?.params?.voluntario ?? false;
+  // Inset superior: el botón atrás va posicionado absoluto y debe quedar por debajo
+  // del status bar/notch (esta pantalla no usa SafeAreaView).
+  const insets = useSafeAreaInsets();
+
+  const [passwordActual, setPasswordActual] = useState('');
+  const [passwordNueva, setPasswordNueva] = useState('');
+  const [confirmarPassword, setConfirmarPassword] = useState('');
+  const [verActual, setVerActual] = useState(false);
+  const [verNueva, setVerNueva] = useState(false);
+  const [verConfirmar, setVerConfirmar] = useState(false);
+  const [modalState, setModalState] = useState<ModalState>('none');
+  const [errorMessage, setErrorMessage] = useState('No se pudo actualizar la contraseña');
+
+  const token = useAuthStore((state) => state.token);
+  // El API de auth exige el GUID del usuario en el cuerpo del cambio de clave.
+  const userId = useAuthStore((state) => state.userId);
+  const nombreCompleto = useAuthStore((state) => state.nombreCompleto);
+  const { executeLogout } = useLogout();
+
+  const politica: ResultadoPolitica = evaluarPolitica(
+    passwordActual,
+    passwordNueva,
+    confirmarPassword
+  );
+
+  const mutation = useCambiarPasswordMutation(token, userId);
+
+  const onPressGuardar = () => {
+    if (!politica.esValida) return; // El botón ya está deshabilitado; guarda defensiva.
+    Keyboard.dismiss();
+    setModalState('syncing');
+    mutation.mutate(
+      { passwordActual, passwordNueva, confirmarPassword },
+      {
+        onSuccess: () => setModalState('success'),
+        onError: (error) => {
+          setErrorMessage(mensajeErrorCambio(error));
+          setModalState('error');
+        },
+      }
+    );
+  };
+
+  const onContinuar = async () => {
+    if (voluntario) {
+      // Cambio voluntario: el usuario ya estaba dentro. NO se toca la bandera de primer
+      // ingreso (podría no existir); solo se vuelve al Dashboard con la pila de navegación.
+      setModalState('none');
+      navigation?.goBack();
+      return;
+    }
+    // Primer ingreso: tras cambiar la contraseña se CIERRA la sesión para que el usuario
+    // reingrese con sus nuevas credenciales (no se mantiene la sesión temporal).
+    // `executeLogout` borra las claves de sesión de SecureStore —incluida la bandera
+    // `requiere_cambio_password`—, invalida la sesión en el backend (best-effort) y llama
+    // a `logout()`: el enrolamiento se conserva y el gate de App.tsx cae a Login.
+    setModalState('none');
+    void executeLogout();
+  };
+
+  return (
+    <KeyboardAwareScrollView
+      className="flex-1 bg-[#F3F4F6]"
+      contentContainerStyle={{ flexGrow: 1 }}
+      keyboardShouldPersistTaps="handled"
+      bounces={false}
+      enableOnAndroid={true}
+      extraScrollHeight={20}
+    >
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        <View className="flex-1 items-center justify-center px-6 py-10 ">
+          {/* Botón atrás: solo en modo voluntario. En el obligatorio la pantalla es una
+              barrera sin salida hasta completar el cambio. */}
+          {voluntario && (
+            <TouchableOpacity
+              onPress={() => navigation?.goBack()}
+              style={{ top: insets.top + 8 }}
+              className="absolute left-4 z-10 flex-row items-center py-2"
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <ArrowLeft size={24} color={COLORES.navy} />
+              <Text className="text-brand-blue font-inter-semibold ml-1">Volver</Text>
+            </TouchableOpacity>
+          )}
+
+          <View className="items-center mb-8 ">
+            <View className="w-20 h-20 rounded-full bg-brand-navy items-center justify-center mb-4 shadow-md">
+              <Lock size={34} color="white" />
+            </View>
+            <Text className="text-brand-blue text-2xl font-inter-bold">Actualiza tu contraseña</Text>
+            <Text className="text-brand-steel text-center mt-2 px-4 font-sans">
+              {nombreCompleto ? `Hola, ${nombreCompleto}. ` : ''}
+              {voluntario
+                ? 'Ingresa tu contraseña actual y define una nueva.'
+                : 'Por seguridad, define una nueva contraseña para tu primer ingreso.'}
+            </Text>
+          </View>
+
+          <View className="bg-white w-full max-w-sm rounded-[32px] p-8 shadow-2xl elevation-5 border-2 border-orange-100">
+            <CampoPassword
+              etiqueta={voluntario ? 'Contraseña actual' : 'Contraseña actual (temporal)'}
+              valor={passwordActual}
+              onChangeText={setPasswordActual}
+              visible={verActual}
+              onToggle={() => setVerActual((v) => !v)}
+              placeholder="Ingrese su contraseña actual"
+            />
+            <CampoPassword
+              etiqueta="Nueva contraseña"
+              valor={passwordNueva}
+              onChangeText={setPasswordNueva}
+              visible={verNueva}
+              onToggle={() => setVerNueva((v) => !v)}
+              placeholder="Ingrese su nueva contraseña"
+            />
+            <CampoPassword
+              etiqueta="Confirmar nueva contraseña"
+              valor={confirmarPassword}
+              onChangeText={setConfirmarPassword}
+              visible={verConfirmar}
+              onToggle={() => setVerConfirmar((v) => !v)}
+              placeholder="Repita su nueva contraseña"
+            />
+
+            <TouchableOpacity
+              className={`rounded-cta py-4 items-center shadow-lg ${politica.esValida ? 'bg-brand-navy' : 'bg-brand-gray'}`}
+              onPress={onPressGuardar}
+              disabled={!politica.esValida || mutation.isPending}
+            >
+              <Text className="text-white font-inter-bold text-lg">
+                {mutation.isPending ? 'Guardando...' : 'Guardar contraseña'}
+              </Text>
+            </TouchableOpacity>
+
+            <View className="mb-6 mt-1">
+              <Text className="text-gray-500 mb-2 font-inter-semibold ml-1">Tu contraseña debe cumplir:</Text>
+              <ReglaItem cumple={politica.longitud} texto="Entre 8 y 20 caracteres" />
+              <ReglaItem cumple={politica.mayuscula} texto="Una letra mayúscula" />
+              <ReglaItem cumple={politica.minuscula} texto="Una letra minúscula" />
+              <ReglaItem cumple={politica.numero} texto="Un número" />
+              <ReglaItem cumple={politica.especial} texto="Un carácter especial (@#$%*!?&)" />
+              <ReglaItem cumple={politica.coincideConfirmacion} texto="Coincide con la confirmación" />
+              <ReglaItem cumple={politica.distintaDeActual} texto="Distinta a la actual" />
+            </View>
+
+            
+          </View>
+        </View>
+      </TouchableWithoutFeedback>
+
+      <Modal visible={modalState !== 'none'} transparent animationType="fade">
+        <View className="flex-1 bg-black/50 items-center justify-center px-6">
+          {modalState === 'syncing' ? (
+            <View className="bg-white w-full max-w-[280px] rounded-[40px] p-10 items-center shadow-2xl">
+              <ActivityIndicator size="large" color={COLORES.navy} />
+              <Text className="text-gray-700 text-lg font-inter-bold mt-6 text-center">Guardando contraseña...</Text>
+            </View>
+          ) : modalState === 'success' ? (
+            <View className="bg-white w-full max-w-[320px] rounded-[40px] p-10 items-center shadow-2xl">
+              <View className="bg-brand-navy w-20 h-20 rounded-full items-center justify-center mb-6">
+                <Check size={44} color="white" />
+              </View>
+              <Text className="text-xl font-inter-bold text-gray-800 mb-2 text-center">¡Contraseña actualizada!</Text>
+              <Text className="text-brand-steel text-center mb-8 font-sans">
+                {voluntario
+                  ? 'Tu contraseña se cambió correctamente.'
+                  : 'Tu nueva contraseña quedó registrada. Inicia sesión con ella.'}
+              </Text>
+              <TouchableOpacity
+                className="bg-brand-navy w-full rounded-cta py-4 items-center"
+                onPress={onContinuar}
+              >
+                <Text className="text-white font-inter-bold text-lg">Continuar</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View className="bg-white w-full max-w-[320px] rounded-[40px] p-10 items-center shadow-2xl">
+              <View className="bg-[#EF4444] w-20 h-20 rounded-full items-center justify-center mb-6">
+                <X size={44} color="white" />
+              </View>
+              <Text className="text-xl font-inter-bold text-gray-800 mb-10 text-center">{errorMessage}</Text>
+              <TouchableOpacity
+                className="bg-brand-navy w-full rounded-cta py-4 items-center"
+                onPress={() => setModalState('none')}
+              >
+                <Text className="text-white font-inter-bold text-lg">Aceptar</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </Modal>
+    </KeyboardAwareScrollView>
+  );
+};

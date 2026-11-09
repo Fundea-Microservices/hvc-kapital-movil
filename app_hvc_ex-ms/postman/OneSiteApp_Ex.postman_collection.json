@@ -1,0 +1,425 @@
+{
+  "info": {
+    "name": "OneSiteApp_Ex — API (api/v1)",
+    "_postman_id": "b7e2a1c0-1111-4a22-9c33-onesiteapp0001",
+    "description": "Colección de pruebas del backend NestJS de OneSiteApp_Ex.\n\nFlujo: Enroll -> Login (captura tokens) -> resto de endpoints.\nLos tokens se guardan solos en variables de colección desde los tests.\n\nCarpetas:\n 1. Flujo principal (seguro para Collection Runner, en orden)\n 2. Escritura / captura\n 3. Destructivos / manuales (NO correr en el Runner completo)\n\nEdita las variables de entorno: baseUrl, codigoEnrolamiento, username, password.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://dev-api-onesite-ex.fundea.org.gt:8087" },
+    { "key": "appVersion", "value": "1.5.0" },
+    { "key": "hardwareId", "value": "POSTMAN-TEST-HW-0001" },
+    { "key": "codigoEnrolamiento", "value": "CAMBIAR-CODIGO-EMPRESA" },
+    { "key": "username", "value": "CAMBIAR-USUARIO" },
+    { "key": "password", "value": "CAMBIAR-PASSWORD" },
+    { "key": "deviceToken", "value": "" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "blockToken", "value": "{{deviceToken}}" },
+    { "key": "multimediaId", "value": "" }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Chequeo genérico: la petición debe responder (no ERR_NETWORK).",
+          "pm.test('Respondió el servidor', function () {",
+          "  pm.expect(pm.response.code, 'código HTTP').to.be.below(600);",
+          "});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Flujo principal",
+      "item": [
+        {
+          "name": "Devices · Enroll",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200/201', () => pm.expect(pm.response.code).to.be.oneOf([200,201]));",
+                  "let j = {}; try { j = pm.response.json(); } catch(e) {}",
+                  "const dt = j.deviceToken || (j.data && j.data.deviceToken);",
+                  "if (dt) { pm.collectionVariables.set('deviceToken', dt); console.log('deviceToken =', dt); }",
+                  "else pm.expect.fail('No vino deviceToken en la respuesta');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"codigoEnrolamiento\": \"{{codigoEnrolamiento}}\",\n  \"hardwareId\": \"{{hardwareId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/enroll",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "devices", "enroll" ]
+            }
+          }
+        },
+        {
+          "name": "Devices · Update metadata",
+          "request": {
+            "method": "PUT",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"{{deviceToken}}\",\n  \"modelo\": \"Postman Runner\",\n  \"versionSO\": \"Android 14\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/metadata",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "devices", "metadata" ]
+            }
+          }
+        },
+        {
+          "name": "Devices · Check version",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/version?appVersion={{appVersion}}",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "devices", "version" ],
+              "query": [ { "key": "appVersion", "value": "{{appVersion}}" } ]
+            }
+          }
+        },
+        {
+          "name": "Auth · Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200/201', () => pm.expect(pm.response.code).to.be.oneOf([200,201]));",
+                  "let j = {}; try { j = pm.response.json(); } catch(e) {}",
+                  "if (j.token_sesion) pm.collectionVariables.set('accessToken', j.token_sesion);",
+                  "if (j.refreshToken) pm.collectionVariables.set('refreshToken', j.refreshToken);",
+                  "if (j.user_id !== undefined && j.user_id !== null) pm.collectionVariables.set('userId', String(j.user_id));",
+                  "console.log('requiereCambioPassword =', j.requiereCambioPassword);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-device-token", "value": "{{deviceToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "auth", "login" ]
+            }
+          }
+        },
+        {
+          "name": "Auth · Permisos",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{accessToken}}" } ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/permisos",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "auth", "permisos" ]
+            }
+          }
+        },
+        {
+          "name": "Surveys · Structure",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-device-token", "value": "{{deviceToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"lastSyncDate\": null\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/surveys/structure",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "surveys", "structure" ]
+            }
+          }
+        },
+        {
+          "name": "Surveys · Catalogs",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-device-token", "value": "{{deviceToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"lastSyncDate\": null\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/surveys/catalogs",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "surveys", "catalogs" ]
+            }
+          }
+        },
+        {
+          "name": "Surveys · Catálogos API (Depto/Muni)",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "x-device-token", "value": "{{deviceToken}}" } ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/surveys/catalogos-api",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "surveys", "catalogos-api" ]
+            }
+          }
+        },
+        {
+          "name": "Sync · Deltas",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-device-token", "value": "{{deviceToken}}" },
+              { "key": "x-app-version", "value": "{{appVersion}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lastSyncDates\": {\n    \"cat_menu\": null,\n    \"cat_parametros\": null\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sync/deltas",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "sync", "deltas" ]
+            }
+          }
+        },
+        {
+          "name": "Sync · Parametros",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Authorization", "value": "Bearer {{accessToken}}" } ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sync/parametros",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "sync", "parametros" ]
+            }
+          }
+        },
+        {
+          "name": "Sync · Ack",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-device-token", "value": "{{deviceToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"tablaNombre\": \"cat_menu\",\n  \"exitoso\": true\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sync/ack",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "sync", "ack" ]
+            }
+          }
+        },
+        {
+          "name": "Sync · Push",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-device-token", "value": "{{deviceToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"cambios\": {}\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/sync/push",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "sync", "push" ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Escritura / captura",
+      "item": [
+        {
+          "name": "Surveys · Submit (captura)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-device-token", "value": "{{deviceToken}}" },
+              { "key": "x-user-id", "value": "{{userId}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"_comentario\": \"Ajusta este payload a la forma real que envía la app (POST /surveys/submit). Ejemplo mínimo:\",\n  \"idEncuesta\": 1,\n  \"uuidInstancia\": \"11111111-1111-1111-1111-111111111111\",\n  \"fechaInicio\": \"2026-01-01T14:00:00.000Z\",\n  \"fechaFin\": \"2026-01-01T14:20:00.000Z\",\n  \"respuestas\": [\n    { \"idPregunta\": 1, \"valor\": \"Juan Perez\" },\n    { \"idPregunta\": 2, \"valor\": \"34\" }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/surveys/submit",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "surveys", "submit" ]
+            }
+          }
+        },
+        {
+          "name": "Diagnostics · Errors (bitácora)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-device-token", "value": "{{deviceToken}}" },
+              { "key": "x-user-id", "value": "{{userId}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"_comentario\": \"Forma aproximada de la bitácora; el endpoint siempre responde 200 aunque descarte entradas.\",\n  \"errores\": [\n    {\n      \"mensaje\": \"Prueba desde Postman\",\n      \"origen\": \"postman\",\n      \"fechaDispositivo\": \"2026-01-01T14:00:00.000Z\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/diagnostics/errors",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "diagnostics", "errors" ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Destructivos / manuales (NO en el Runner completo)",
+      "item": [
+        {
+          "name": "Auth · Refresh (rota tokens)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "let j = {}; try { j = pm.response.json(); } catch(e) {}",
+                  "if (j.token_sesion) pm.collectionVariables.set('accessToken', j.token_sesion);",
+                  "if (j.accessToken) pm.collectionVariables.set('accessToken', j.accessToken);",
+                  "if (j.refreshToken) pm.collectionVariables.set('refreshToken', j.refreshToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/refresh",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "auth", "refresh" ]
+            }
+          }
+        },
+        {
+          "name": "Auth · Change password (CAMBIA la clave)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"passwordActual\": \"{{password}}\",\n  \"passwordNueva\": \"NuevaClave2026@\",\n  \"confirmarPassword\": \"NuevaClave2026@\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/change-password",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "auth", "change-password" ]
+            }
+          }
+        },
+        {
+          "name": "Auth · Logout (invalida sesión)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/logout",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "auth", "logout" ]
+            }
+          }
+        },
+        {
+          "name": "Devices · Block (BLOQUEA el equipo)",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/block/{{blockToken}}",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "devices", "block", "{{blockToken}}" ]
+            }
+          }
+        },
+        {
+          "name": "Devices · Unenroll (desvincula)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "x-device-token", "value": "{{deviceToken}}" } ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/unenroll",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "devices", "unenroll" ]
+            }
+          }
+        },
+        {
+          "name": "Multimedia · Get by id",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "x-device-token", "value": "{{deviceToken}}" } ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/multimedia/{{multimediaId}}",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "multimedia", "{{multimediaId}}" ]
+            }
+          }
+        },
+        {
+          "name": "Multimedia · Upload (multipart, stub)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "x-device-token", "value": "{{deviceToken}}" },
+              { "key": "x-user-id", "value": "{{userId}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "archivo", "type": "file", "src": [] },
+                { "key": "_nota", "value": "Ajusta los campos (CamposSubida) al contrato real del interceptor de subida.", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/multimedia",
+              "host": [ "{{baseUrl}}" ],
+              "path": [ "api", "v1", "multimedia" ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
