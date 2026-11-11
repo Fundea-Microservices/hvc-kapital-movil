@@ -45,8 +45,7 @@ jobs:
           semgrep scan \
             --config=auto \
             --json --output=semgrep-results.json \
-            --exclude="onesiteapp_ex-ms/dist" \
-            --exclude="onesiteapp_ex/build" \
+            --exclude="dist" \
             --error
 
       - name: Mostrar resumen legible en el log
