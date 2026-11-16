@@ -12,6 +12,7 @@ import { loginApi, registrarSesionApi } from '../../../data/remote/auth.api';
 import { useAuthStore } from '../../store/useAuthStore';
 import { authLocalService } from '../../../data/local/services/authLocalService';
 import { runFullSync } from '../../../data/local/services/syncManager';
+import { sincronizarMenuSinFallar } from '../../../data/local/services/menu.service';
 import { mensajeDeError } from '../../../data/remote/types/sync.types';
 import { useUnenroll } from '../../hooks/useUnenroll';
 import { DesvincularModal } from '../../components/DesvincularModal';
@@ -53,19 +54,15 @@ export const LoginScreen = () => {
       try {
         // 1. Guardar tokens de seguridad (Venían del loginApi)
         await SecureStore.setItemAsync('token_sesion', data.token_sesion);
-        // El API de auth aún no emite refresh token: se borra el viejo para que el
-        // interceptor no intente refrescar con una credencial de otro servidor.
-        if (data.refreshToken) {
-          await SecureStore.setItemAsync('refresh_token', data.refreshToken);
-        } else {
-          await SecureStore.deleteItemAsync('refresh_token');
-        }
+        // El refresh token NO viene del login, sino de /auth/sesion (abajo). Se borra
+        // el viejo para que el interceptor no refresque con una credencial caduca.
+        await SecureStore.deleteItemAsync('refresh_token');
         await SecureStore.setItemAsync('user_id', data.user_id); // GUID de auth.Usuario
         await SecureStore.setItemAsync('user_name', data.usuario || username.trim());
 
-        // 1b. Registrar la sesión en nuestro backend: el login ocurrió fuera, así que
-        // `app.Sesiones` solo se llena aquí. De paso trae las banderas propias de la
-        // app. Best-effort: si el backend no responde, el login NO se cae.
+        // 1b. Abrir la sesión del equipo: `/auth/login` solo emite el JWT, así que
+        // `app.Sesiones` se llena aquí. Devuelve el refresh token y las banderas.
+        // Best-effort: si falla, el login NO se cae, pero se queda sin refresh.
         let debeCambiarPassword = !!data.requiereCambioPassword;
         console.log('[SESION] Registrando sesión en el backend…');
         try {
@@ -74,6 +71,11 @@ export const LoginScreen = () => {
           console.log(
             `[SESION] OK requiereCambioPassword=${sesion.requiereCambioPassword} tipo=${sesion.tipoUsuario}`
           );
+          // Sin esto el interceptor no puede renovar el JWT y, al vencer, expulsa
+          // al asesor al login en medio de una visita.
+          if (sesion.refreshToken) {
+            await SecureStore.setItemAsync('refresh_token', sesion.refreshToken);
+          }
           if (sesion.tipoUsuario) {
             await SecureStore.setItemAsync('tipo_usuario', sesion.tipoUsuario);
           }
@@ -85,12 +87,13 @@ export const LoginScreen = () => {
 
         await SecureStore.setItemAsync('requiere_cambio_password', String(debeCambiarPassword));
 
-        // 2. Identidad: toda viene en el login; el API de auth no tiene /permisos.
+        // 2. Identidad: toda viene en el login.
         const nombreParaMostrar = data.nombrecompleto || username.trim();
         await SecureStore.setItemAsync('nombre_completo', nombreParaMostrar);
 
         // 3. GUARDADO OFFLINE
-        // Permisos vacíos: sin endpoint de permisos granulares el menú se muestra completo.
+        // permisos_json queda vacío a propósito: el menú ya llega filtrado por rol
+        // y TipoUsuario desde el API, así que no hay nada que gatear en el móvil.
         await authLocalService.savePerfilOffline({
           UsuarioGuid: data.user_id,
           NombreCompleto: nombreParaMostrar || username,
@@ -99,6 +102,10 @@ export const LoginScreen = () => {
           RolNombre: data.rol || 'Usuario',
           Permisos: '{}',
         });
+
+        // 4. Menú del usuario: lo sirve el API (rol + showApp + TipoUsuario) y se
+        // guarda en SQLite para que el drawer siga pintándose sin señal.
+        await sincronizarMenuSinFallar(data.token_sesion);
 
         setModalState('none');
         setLoggedIn(data.token_sesion, data.user_id, nombreParaMostrar, debeCambiarPassword);

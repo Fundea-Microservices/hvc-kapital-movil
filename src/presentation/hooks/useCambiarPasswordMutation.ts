@@ -1,7 +1,6 @@
 import { useMutation, type UseMutationResult } from '@tanstack/react-query';
 import {
   cambiarPasswordApi,
-  marcarPasswordCambiadaApi,
   type CambiarPasswordPayload,
 } from '../../data/remote/auth.api';
 
@@ -13,23 +12,15 @@ import {
  * la misma petición volvería a fallar; además, reenviar credenciales sin intervención
  * del usuario no aporta. El token de sesión se pasa explícito porque esta pantalla
  * puede abrirse justo tras el login, antes de que el interceptor lo tenga en caché.
+ *
+ * El API apaga `RequiereCambioPassword` dentro de la misma operación, así que ya no
+ * hace falta una segunda llamada para eso.
  */
 export const useCambiarPasswordMutation = (
   token: string | null,
-  usuarioId: string | null
 ): UseMutationResult<{ message: string }, Error, CambiarPasswordPayload> =>
   useMutation<{ message: string }, Error, CambiarPasswordPayload>({
     mutationKey: ['cambiar-password'],
-    mutationFn: async (payload) => {
-      const resultado = await cambiarPasswordApi(payload, token ?? '', usuarioId ?? '');
-      // Apagar la bandera es best-effort: la contraseña YA cambió y fallar aquí no
-      // debe mostrarse como error. El costo de un fallo es que la pantalla reaparezca.
-      try {
-        await marcarPasswordCambiadaApi(token ?? '');
-      } catch (e) {
-        console.warn('[PASSWORD] No se pudo apagar RequiereCambioPassword:', e);
-      }
-      return resultado;
-    },
+    mutationFn: (payload) => cambiarPasswordApi(payload, token ?? ''),
     retry: false,
   });

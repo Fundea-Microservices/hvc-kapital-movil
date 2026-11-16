@@ -126,7 +126,8 @@ export const CambioPasswordScreen = ({ navigation, route }: Props = {}) => {
     confirmarPassword
   );
 
-  const mutation = useCambiarPasswordMutation(token, userId);
+  // Sin userId: el servidor lo toma del JWT.
+  const mutation = useCambiarPasswordMutation(token);
 
   const onPressGuardar = () => {
     if (!politica.esValida) return; // El botón ya está deshabilitado; guarda defensiva.

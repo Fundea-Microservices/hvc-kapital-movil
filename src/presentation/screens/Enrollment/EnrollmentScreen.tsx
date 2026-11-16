@@ -59,8 +59,9 @@ export const EnrollmentScreen = () => {
         setModalMessage('Bienvenido');
         setModalState('success');
 
+        // El equipo se identifica con la cabecera x-device-token, que el
+        // interceptor lee del SecureStore recién escrito arriba.
         updateMetadataApi({
-          deviceToken: data.deviceToken,
           modelo: Device.modelName || 'Unknown',
           versionSO: `${Platform.OS} ${Device.osVersion}`
         }).catch(console.warn);

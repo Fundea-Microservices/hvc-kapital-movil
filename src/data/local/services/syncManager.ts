@@ -22,6 +22,7 @@ import axios from 'axios';
 import { estamparIdCaptura, contarPendientesDeSubida } from './multimedia.service';
 import { subirMultimediaPendiente } from '../../remote/services/multimediaUploader';
 import { enviarBitacora } from '../../remote/services/bitacoraSender';
+import { sincronizarMenuSinFallar } from './menu.service';
 import { registrarError } from './bitacora.service';
 import { sincronizarClientesAsignados, empujarRechazosPendientes } from './clientesAsignados.service';
 
@@ -33,7 +34,6 @@ let isSyncRunning = false;
 // Tablas cuyo ciclo de sincronización se audita contra el servidor (Regla 5.5):
 // la fecha local por tabla solo avanza cuando el ACK es confirmado.
 const TABLAS_AUDITADAS = [
-  'cat_menu_appex',
   'cat_parametros_appex',
   'local_estructura_pregunta',
   'local_catalogo_opciones',
@@ -41,16 +41,6 @@ const TABLAS_AUDITADAS = [
   // /api/onesiteex/precarga) no acepta ningún parámetro de fecha, así que cada carga
   // es completa y no hay cursor que sellar
 ];
-
-const mapearFilaMenu = (row: FilaServidor) => ({
-  id: textoDe(row, 'IdMenu', 'id'),
-  titulo: textoDe(row, 'Titulo', 'titulo', 'Nombre') ?? 'Sin Título',
-  icono: textoDe(row, 'Icono', 'icono') ?? 'folder',
-  orden: numeroDe(row, 1, 'Orden', 'orden'),
-  ruta_pantalla: textoDe(row, 'RutaPantalla', 'ruta_pantalla'),
-  id_padre: textoDe(row, 'IdPadre', 'id_padre'),
-  id_permiso_requerido: textoDe(row, 'IdPermisoRequerido', 'idPermisoRequerido', 'id_permiso_requerido'),
-});
 
 /** Lee de metadata_sync la última fecha confirmada por tabla (ISO) para enviar deltas reales. */
 const leerFechasSyncPorTabla = async (): Promise<Record<string, string | null>> => {
@@ -283,7 +273,6 @@ export const runFullSync = async () => {
         const [coreRes, structureRes, catalogsRes] = await Promise.all([
           apiClient.post('/sync/deltas', {
             lastSyncDates: {
-              cat_menu_appex: fechasPorTabla['cat_menu_appex'] ?? syncDate,
               cat_parametros_appex: fechasPorTabla['cat_parametros_appex'] ?? syncDate,
             }
           }),
@@ -356,14 +345,10 @@ export const runFullSync = async () => {
             }),
             updated: [], deleted: []
           },
-          cat_menu_appex: (() => {
-            const cambios = obtenerCambiosTabla(coreChanges, 'cat_menu_appex', 'Cat_Menu_AppEx');
-            return {
-              created: cambios.created.map(mapearFilaMenu),
-              updated: cambios.updated.map(mapearFilaMenu),
-              deleted: cambios.deleted,
-            };
-          })(),
+          // El menu ya NO llega por aqui: lo sirve el API de HVC Kapital y lo
+          // escribe menu.service. Se manda vacio para que WatermelonDB no borre
+          // esas filas al no verlas en el delta.
+          cat_menu_appex: { created: [], updated: [], deleted: [] },
         };
 
         return {
@@ -386,6 +371,10 @@ export const runFullSync = async () => {
       await sincronizarCatalogos(database, token);
       await sincronizarCatalogosApi(database);
     }
+
+    // El menu lo sirve el API de HVC Kapital, no este sync. Se refresca aqui
+    // para que un acceso concedido o revocado llegue sin obligar a reingresar.
+    await sincronizarMenuSinFallar();
     await empujarRechazosPendientes(database);
 
     // ========================================================================
