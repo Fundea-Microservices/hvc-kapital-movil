@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, Image, FlatList, Dimensions, ActivityIndicator, TouchableOpacity, Linking } from 'react-native';
-import axios from 'axios';
-import { registrarFalloHttp } from '../../../core/network/apiClient';
+import { apiClientAuth, registrarFalloHttp } from '../../../core/network/apiClient';
+import { extraerData } from '../../../core/network/envelope';
 import { COLORES } from '../../theme/colores';
 
 const { width } = Dimensions.get('window');
@@ -13,11 +13,11 @@ const CARD_MARGIN = 16;
 const CARD_MIN_HEIGHT = 380;
 
 /**
- * URL del servicio de configuración (banners del carrusel). Se toma del entorno
- * para no acoplar la app a una IP de red interna: una IP quemada hace que el
- * carrusel solo funcione dentro de esa red y falle siempre en campo.
+ * Base del API de HVC Kapital, que sirve el carrusel desde la Fase 4. Se usa solo
+ * para armar la URL de la imagen: el listado va por `apiClientAuth`, que ya la
+ * tiene. Se toma del entorno para no quemar una IP de red interna en el código.
  */
-const CARRUSEL_API_URL = process.env.EXPO_PUBLIC_API_CARRUSEL_URL;
+const CARRUSEL_API_URL = process.env.EXPO_PUBLIC_API_AUTH_URL;
 
 /** Contrato del banner tal como lo expone el servicio de configuración. */
 interface BannerCarrusel {
@@ -57,24 +57,23 @@ export const DynamicCarousel = () => {
       // Sin configuración de entorno el componente se degrada en silencio
       // (no renderiza) en lugar de intentar una IP inexistente.
       if (!CARRUSEL_API_URL) {
-        console.warn('[CARRUSEL] EXPO_PUBLIC_API_CARRUSEL_URL no está definida; el carrusel no se mostrará.');
+        console.warn('[CARRUSEL] EXPO_PUBLIC_API_AUTH_URL no está definida; el carrusel no se mostrará.');
         setLoading(false);
         return;
       }
 
       try {
-        const response = await axios.get<unknown>(`${CARRUSEL_API_URL}/config/carousel`);
-        const cuerpo = response.data;
+        // El servidor ya filtra por audiencia (TipoUsuario del token) y vigencia;
+        // aquí solo queda lo que es para la app, que él no decide.
+        const response = await apiClientAuth.get<unknown>('/config/carrusel/obtener');
+        const datos = extraerData<unknown[]>(response.data, 'Carrusel');
 
-        if (typeof cuerpo === 'object' && cuerpo !== null) {
-          const posible = cuerpo as Record<string, unknown>;
-          if (posible.success === true && Array.isArray(posible.data)) {
-            const activos = posible.data
-              .filter(esBannerValido)
-              .filter((banner) => banner.activo && banner.visibleApp)
-              .sort((a, b) => a.orden - b.orden);
-            setCarousels(activos);
-          }
+        if (Array.isArray(datos)) {
+          const activos = datos
+            .filter(esBannerValido)
+            .filter((banner) => banner.activo && banner.visibleApp)
+            .sort((a, b) => a.orden - b.orden);
+          setCarousels(activos);
         }
       } catch (error) {
         registrarFalloHttp('CARRUSEL', error);
@@ -105,11 +104,17 @@ export const DynamicCarousel = () => {
     return () => clearInterval(timer);
   }, [currentIndex, carousels.length]);
 
+  /**
+   * `fotoUrl` llega como ruta relativa ("storage/carrusel/banner.png"). La ruta del
+   * API es pública a propósito: <Image> no envía cabeceras, así que un endpoint con
+   * token dejaría las imágenes en blanco.
+   */
   const resolveImageUrl = (url: string | null): string => {
     if (!url) return 'https://via.placeholder.com/400x200?text=Sin+Imagen';
     if (url.startsWith('http')) return url;
     if (!CARRUSEL_API_URL) return 'https://via.placeholder.com/400x200?text=Sin+Imagen';
-    return `${CARRUSEL_API_URL}/config/carousel/imagen?fotoUrl=${encodeURIComponent(url)}`;
+    const archivo = url.split('/').pop() ?? '';
+    return `${CARRUSEL_API_URL}/config/carrusel/imagen/${encodeURIComponent(archivo)}`;
   };
 
   if (loading) {

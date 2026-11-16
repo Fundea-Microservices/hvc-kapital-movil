@@ -105,11 +105,11 @@ describe('CambioPasswordScreen — el botón como barrera', () => {
     fireEvent.press(screen.getByText('Guardar contraseña'));
 
     await waitFor(() => expect(mockCambiar).toHaveBeenCalledTimes(1));
+    // Solo dos argumentos: el usuario ya no viaja en el cuerpo, el servidor lo
+    // toma del JWT.
     expect(mockCambiar).toHaveBeenCalledWith(
       { passwordActual: 'Temporal1!', passwordNueva: 'Segura2026#', confirmarPassword: 'Segura2026#' },
       expect.anything(),
-      // Tercer argumento: GUID del usuario, que el API de auth exige en el cuerpo.
-      expect.anything()
     );
   });
 });

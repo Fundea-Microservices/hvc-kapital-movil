@@ -4,6 +4,7 @@ import * as Application from 'expo-application';
 import { Alert } from 'react-native';
 import { useAuthStore } from '../../presentation/store/useAuthStore';
 import { wipeLocalDatabase } from '../../data/local/services/database.service';
+import { extraerData } from './envelope';
 
 const baseURL = process.env.EXPO_PUBLIC_API_URL;
 const baseCatalogosURL = process.env.EXPO_PUBLIC_API_CATALOGOS_URL;
@@ -48,8 +49,18 @@ const tokenAgenda = process.env.EXPO_PUBLIC_TOKEN_CARGA_AGENDA_CLIENTES;
  * Solo se registra la URL: nunca tokens ni credenciales.
  */
 const diagnosticarUrlBase = (): void => {
-  console.log('🌐 [RED] URL base del API:', baseURL ?? '(SIN DEFINIR)');
+  console.log('🌐 [RED] URL base del microservicio (encuestas):', baseURL ?? '(SIN DEFINIR)');
+  console.log('🌐 [RED] URL base del API HVC Kapital:', baseAuthURL ?? '(SIN DEFINIR)');
   console.log('🌐 [RED] URL base de catálogos:', baseCatalogosURL ?? '(SIN DEFINIR)');
+
+  // Sin esta base no hay login, enrolamiento, sesión ni carrusel: la app no arranca.
+  if (!baseAuthURL) {
+    console.error(
+      '❌ [RED] EXPO_PUBLIC_API_AUTH_URL no llegó al bundle. Sin ella fallan el ' +
+      'enrolamiento, el login y el carrusel. Reinicie con: npx expo start -c',
+    );
+  }
+
   // Sin definir NO es un error: la carga de agenda degrada y el resto de la app sigue.
   console.log('🌐 [RED] URL base de carga de agenda:', baseAgendaURL ?? '(SIN DEFINIR)');
 
@@ -109,12 +120,13 @@ export const apiClient = axios.create({
 });
 
 /**
- * Instancia DEDICADA al API de autenticación (puerto 3200).
+ * Instancia DEDICADA al API de HVC Kapital (puerto 3200).
  *
- * Vive aparte del microservicio de encuestas porque es otro servicio, con otra URL
- * base y otro contrato de respuesta ({ success, data }). No lleva los interceptores
- * compartidos: el login ocurre ANTES de que exista sesión, y este servicio no conoce
- * el enrolamiento del equipo, así que `x-device-token` y `Authorization` no le sirven.
+ * Sirve autenticación, enrolamiento de equipos, sesiones y carrusel. Vive aparte
+ * del microservicio de encuestas (5030) porque es otro servicio, con otra URL base
+ * y otro contrato: responde `{ success, data }` y hay que desempacarlo con
+ * `extraerData`. Lleva los mismos interceptores que `apiClient`: desde la Fase 2
+ * también necesita `x-device-token` y `Authorization`.
  */
 export const apiClientAuth = axios.create({
   baseURL: baseAuthURL,
@@ -234,6 +246,8 @@ const requestInterceptorInterceptor = async (config: InternalAxiosRequestConfig)
 };
 
 apiClient.interceptors.request.use(requestInterceptorInterceptor, (error) => Promise.reject(error));
+// El API de HVC Kapital exige x-device-token en /auth/sesion y /devices/*.
+apiClientAuth.interceptors.request.use(requestInterceptorInterceptor, (error) => Promise.reject(error));
 apiClientCatalogos.interceptors.request.use(requestInterceptorInterceptor, (error) => Promise.reject(error));
 // Necesita los mismos tokens: el asesor se deriva del JWT, nunca del cuerpo.
 apiClientAgenda.interceptors.request.use(requestInterceptorInterceptor, (error) => Promise.reject(error));
@@ -446,8 +460,15 @@ const responseInterceptorInterceptor = async (error: unknown) => {
   // SPRINT 2: Manejo de Expiración de Token (HTTP 401)
   if (error.response?.status === 401 && !originalRequest._retry) {
     
-    // Se omiten rutas críticas de autenticación inicial para evitar bucles ciclistas
-    const excludedUrls = ['/auth/login', '/devices/enroll', '/devices/unenroll'];
+    // Se omiten rutas críticas de autenticación inicial para evitar bucles ciclistas.
+    // '/auth/refresh' incluido: si el propio refresh da 401, reintentarlo no arregla
+    // nada y encadenaría llamadas hasta agotar el rate limit.
+    const excludedUrls = [
+      '/auth/login',
+      '/auth/refresh',
+      '/devices/enroll',
+      '/devices/unenroll',
+    ];
     if (excludedUrls.includes(originalRequest.url ?? '')) {
       return Promise.reject(error);
     }
@@ -472,17 +493,31 @@ const responseInterceptorInterceptor = async (error: unknown) => {
       // Timeout EXPLÍCITO: `axios.post` global no hereda el timeout de `apiClient`, así
       // que sin esto un refresh que no responde deja la petición original colgada para
       // siempre (p. ej. el modal "Guardando contraseña..." nunca se cierra).
+      // El refresh lo sirve el API de HVC Kapital (3200), no el microservicio:
+      // ahí viven las sesiones (app.Sesiones) desde la Fase 2.
       const response = await axios.post(
-        `${baseURL}/auth/refresh`,
+        `${baseAuthURL}/auth/refresh`,
         { refreshToken },
         { timeout: 30000 },
       );
-      const newToken = response.data.token_sesion;
+      const datos = extraerData<{ token?: string; refreshToken?: string }>(
+        response.data,
+        'Refresh de sesión',
+      );
+      const newToken = datos.token;
+      if (!newToken) throw new Error('El refresh no devolvió un token nuevo.');
 
       // Persistencia del nuevo token transaccional
       await SecureStore.setItemAsync('token_sesion', newToken);
-      
+
+      // El servidor ROTA el refresh token: el anterior ya no sirve. Si no se
+      // guarda el nuevo, el siguiente refresh falla y expulsa al asesor.
+      if (datos.refreshToken) {
+        await SecureStore.setItemAsync('refresh_token', datos.refreshToken);
+      }
+
       apiClient.defaults.headers.common['Authorization'] = 'Bearer ' + newToken;
+      apiClientAuth.defaults.headers.common['Authorization'] = 'Bearer ' + newToken;
       apiClientCatalogos.defaults.headers.common['Authorization'] = 'Bearer ' + newToken;
       originalRequest.headers['Authorization'] = 'Bearer ' + newToken;
       
@@ -540,6 +575,9 @@ const responseInterceptorInterceptor = async (error: unknown) => {
 
 // Se acopla la regla de escucha y auditoría de respuestas a ambos clientes HTTP
 apiClient.interceptors.response.use((response) => response, responseInterceptorInterceptor);
+// Comparte el 401 (refresh) y el 403 ('Device Blocked'): el API de HVC Kapital es
+// el que emite esos contratos desde las Fases 1 y 2.
+apiClientAuth.interceptors.response.use((response) => response, responseInterceptorInterceptor);
 apiClientCatalogos.interceptors.response.use((response) => response, responseInterceptorInterceptor);
 /**
  * La agenda comparte el interceptor de PETICIÓN pero NO el de respuesta.

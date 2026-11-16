@@ -1,9 +1,11 @@
-import axios from 'axios';
-import { apiClient, apiClientAuth } from '../../core/network/apiClient';
+import { apiClientAuth } from '../../core/network/apiClient';
+import { extraerData, extraerMensaje } from '../../core/network/envelope';
 
-// NOTA: Cambia esta IP por la IP local de tu computadora http://TU_IP_LOCAL:3000/api/v1 en la misma red Wi-Fi
-// Ej: 'http://192.168.1.15:3000/api/v1' (No uses localhost en móvil)o  10.0.2.2 si es emulador / process.env.EXPO_PUBLIC_API_URL
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+/**
+ * Todo este archivo habla con el API de HVC Kapital (3200), que responde el sobre
+ * `{ success, data }`. El microservicio de encuestas (5030) sigue sirviendo
+ * encuestas, sincronización y multimedia desde sus propios módulos.
+ */
 
 // --- DTOs y Respuestas ---
 export interface EnrollPayload {
@@ -18,7 +20,6 @@ export interface EnrollResponse {
 }
 
 export interface UpdateMetadataPayload {
-  deviceToken: string;
   modelo: string;
   versionSO: string;
 }
@@ -85,29 +86,42 @@ export interface TokenPayload {
   refreshToken: string;
 }
 
-// Interfaz para la respuesta de permisos
+/**
+ * Permisos del usuario, tal como los expone `GET /auth/permisos/mis-permisos`.
+ *
+ * Sustituye al contrato del microservicio, que traía `accesos {lectura, escritura}`
+ * y `permisosGranulares`: esa distinción no existe en la matriz del API, donde un
+ * permiso es un código con su módulo y su acción.
+ */
 export interface PermisosResponse {
-  rol: string;
-  accesos: {
-    lectura: boolean;
-    escritura: boolean;
-  };
-  /** JSON de permisos granulares: arreglo de ids u objeto { idPermiso: boolean }. */
-  permisosGranulares: unknown;
-  /** El endpoint NO devuelve el nombre; se conserva por compatibilidad de lectura. */
-  NombreCompleto?: string;
-  nombreCompleto?: string;
+  usuarioId: string;
+  /** Nombre del rol, no su id; null si el usuario no tiene rol. */
+  rol: string | null;
+  /** Un rol administrador recibe todos los permisos activos. */
+  esAdmin: boolean;
+  /** Códigos efectivos, p. ej. ['AGENDA_VER', 'ENCUESTA_RESPONDER']. */
+  permisos: string[];
 }
 
-// métodos de Enrolamiento para usar apiClient (Sprint 1)
+/** `true` si el usuario puede ejercer ese código de permiso. */
+export const tienePermiso = (permisos: PermisosResponse, codigo: string): boolean =>
+  permisos.esAdmin || permisos.permisos.includes(codigo.toUpperCase());
+
+// Enrolamiento del equipo. Lo sirve el API (3200) desde la Fase 1.
 export const enrollDeviceApi = async (data: EnrollPayload): Promise<EnrollResponse> => {
-  const response = await apiClient.post<EnrollResponse>('/devices/enroll', data);
-  return response.data;
+  const response = await apiClientAuth.post<unknown>('/devices/enroll', data);
+  return extraerData<EnrollResponse>(response.data, 'Enrolamiento');
 };
 
-// Nuevo método PUT para actualizar la información del equipo (Sprint 1)
+/**
+ * Metadatos del equipo. El servidor identifica el equipo por la cabecera
+ * `x-device-token` que inyecta el interceptor, no por el cuerpo.
+ */
 export const updateMetadataApi = async (data: UpdateMetadataPayload): Promise<void> => {
-  await apiClient.put('/devices/metadata', data);
+  await apiClientAuth.put('/devices/metadata', {
+    modelo: data.modelo,
+    versionSO: data.versionSO,
+  });
 };
 
 
@@ -169,56 +183,87 @@ export const loginApi = async (data: LoginPayload): Promise<LoginResponse> => {
  * y gobiernan qué hace la app tras el login.
  */
 export interface SesionRegistrada {
-  message: string;
+  /** Credencial para renovar el JWT. El servidor la rota en cada refresh. */
+  refreshToken: string;
+  /** Vencimiento del refresh token, ISO 8601. */
+  expiraEn: string;
   requiereCambioPassword: boolean;
   /** EMPLEADO | EMISOR | INVERSION | EMISORINVERSOR; null si no está clasificado. */
   tipoUsuario: string | null;
 }
 
 /**
- * Registra la sesión en nuestro backend tras un login hecho en el API de auth.
- * Llena `app.Sesiones` (para el corte remoto desde el BackOffice) y devuelve las
- * banderas propias de la app. El token va explícito: acaba de emitirse.
+ * Abre la sesión del equipo tras el login y entrega el refresh token.
+ * Llena `app.Sesiones`, que permite el corte remoto desde el BackOffice. El token
+ * va explícito porque acaba de emitirse y aún no está en el SecureStore.
  */
 export const registrarSesionApi = async (token: string): Promise<SesionRegistrada> => {
-  const response = await apiClient.post<SesionRegistrada>('/auth/sesion', {}, {
+  const response = await apiClientAuth.post<unknown>('/auth/sesion', {}, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return response.data;
+  return extraerData<SesionRegistrada>(response.data, 'Registro de sesión');
+};
+
+// 2. Cerrar sesión. Responde 200 aunque el token ya no exista.
+export const logoutApi = async (data: TokenPayload): Promise<{ message: string }> => {
+  const response = await apiClientAuth.post<unknown>('/auth/logout', data);
+  return { message: extraerMensaje(response.data, 'Sesión cerrada') };
 };
 
 /**
- * Apaga `RequiereCambioPassword` en nuestro backend tras cambiar la clave en el API
- * de auth, que no conoce esa columna. Sin esto la pantalla saldría en cada login.
+ * Renovación manual del JWT. El interceptor de `apiClient` hace lo mismo de forma
+ * automática ante un 401; esta función queda para renovaciones explícitas.
+ * OJO: el servidor rota el refresh token, así que hay que guardar el nuevo.
  */
-export const marcarPasswordCambiadaApi = async (token: string): Promise<void> => {
-  await apiClient.post('/auth/password-cambiada', {}, {
+export const refreshTokenApi = async (
+  data: TokenPayload,
+): Promise<{ token_sesion: string; refreshToken: string }> => {
+  const response = await apiClientAuth.post<unknown>('/auth/refresh', data);
+  const datos = extraerData<{ token: string; refreshToken: string }>(
+    response.data,
+    'Refresh de sesión',
+  );
+  return { token_sesion: datos.token, refreshToken: datos.refreshToken };
+};
+
+/**
+ * Permisos efectivos del usuario del token: los de su rol, más las excepciones
+ * propias que permiten y menos las que niegan. Un rol admin los recibe todos.
+ * El token va explícito porque la pantalla puede abrirse justo tras el login.
+ */
+export const getPermisosApi = async (token: string): Promise<PermisosResponse> => {
+  const response = await apiClientAuth.get<unknown>('/auth/permisos/mis-permisos', {
     headers: { Authorization: `Bearer ${token}` },
   });
+  return extraerData<PermisosResponse>(response.data, 'Permisos');
 };
 
-// 2. Cerrar Sesión (El método que estaba faltando)
-export const logoutApi = async (data: TokenPayload): Promise<{ message: string }> => {
-  // Llamamos al endpoint POST /auth/logout de nuestro backend
-  const response = await apiClient.post('/auth/logout', data);
-  return response.data;
-};
+/**
+ * Opción de menú tal como la expone `GET /auth/accesos/mi-menu`.
+ * El servidor ya filtró por rol, por showApp y por TipoUsuario: lo que llega
+ * es exactamente lo que este usuario puede ver.
+ */
+export interface OpcionMenuApi {
+  id: string;
+  /** Id del menú padre; null en las opciones de primer nivel. */
+  idPadre: string | null;
+  titulo: string;
+  icono: string | null;
+  rutaPantalla: string | null;
+  orden: number;
+}
 
-// 3. Refrescar Token (Lo dejamos listo para cuando el JWT expire)
-export const refreshTokenApi = async (data: TokenPayload): Promise<{ token_sesion: string }> => {
-  const response = await apiClient.post('/auth/refresh', data);
-  return response.data;
-};
-
-// NUEVA FUNCIÓN: Obtener Permisos Granulares
-// Le pasamos el token directamente para asegurar que lo envíe al instante después del login
-export const getPermisosApi = async (token: string): Promise<PermisosResponse> => {
-  const response = await apiClient.get<PermisosResponse>('/auth/permisos', {
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
+/**
+ * Menú del usuario del token. Reemplaza al que servía el sync del microservicio.
+ * El token va explícito porque se pide en el login, antes de que el interceptor
+ * tenga el JWT en SecureStore.
+ */
+export const getMenuApi = async (token?: string): Promise<OpcionMenuApi[]> => {
+  const response = await apiClientAuth.get<unknown>('/auth/accesos/mi-menu', {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
-  return response.data;
+  const datos = extraerData<unknown>(response.data, 'Menú');
+  return Array.isArray(datos) ? (datos as OpcionMenuApi[]) : [];
 };
 
 // 5. Cambiar contraseña. Operación ONLINE directa: no viaja en el sync. La sirve el
@@ -227,23 +272,24 @@ export const getPermisosApi = async (token: string): Promise<PermisosResponse> =
 export const cambiarPasswordApi = async (
   data: CambiarPasswordPayload,
   token: string,
-  usuarioId: string
 ): Promise<{ message: string }> => {
-  // El API exige el GUID en el cuerpo y nombra los campos en español.
-  const response = await apiClientAuth.post<{ message?: string }>(
+  // Sin usuarioId: el servidor lo toma del JWT. Mandarlo no cambiaría nada, y
+  // aceptarlo fue lo que permitía cambiarle la clave a otro usuario.
+  const response = await apiClientAuth.post<unknown>(
     '/auth/usuarios/cambiar-clave',
     {
-      usuarioId,
       claveAnterior: data.passwordActual,
       claveNueva: data.passwordNueva,
     },
     { headers: { Authorization: `Bearer ${token}` } }
   );
-  return { message: response.data?.message || 'Contraseña actualizada correctamente' };
+  return {
+    message: extraerMensaje(response.data, 'Contraseña actualizada correctamente'),
+  };
 };
 
 // 6. Eliminar registro.
 export const desvincularDispositivoApi = async (): Promise<{ message: string }> => {
-  const response = await apiClient.post<{ message: string }>('/devices/unenroll');
-  return response.data;
+  const response = await apiClientAuth.post<unknown>('/devices/unenroll');
+  return { message: extraerMensaje(response.data, 'Equipo desvinculado') };
 };
